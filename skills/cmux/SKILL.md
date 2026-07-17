@@ -1,13 +1,8 @@
----
-name: cmux
-description: Orchestrate multi-agent cmux terminal workspaces — Claude Code, OpenAI Codex, and xAI Grok panes with dispatch workflows, completion detection, provider strategy selection, browser panes, and workflow templates.
----
-
 # cmux Terminal Setup (/cmux)
 
 Manage and configure cmux terminal workspaces for Claude Code projects. Orchestrate multi-agent
-sessions (Claude Code, OpenAI Codex CLI, and xAI Grok Build CLI), browser panes, and workflow
-templates from the main Claude Code instance.
+sessions (Claude Code, OpenAI Codex CLI, xAI Grok Build CLI, and Moonshot Kimi Code CLI), browser
+panes, and workflow templates from the main Claude Code instance.
 
 > **Layering with the official cmux skills** (installed via `npx skills add manaflow-ai/cmux-skills -g`):
 > - `cmux-cli` — canonical CLI reference (command discovery, handles, sockets). Defer to it for raw CLI questions.
@@ -17,7 +12,7 @@ templates from the main Claude Code instance.
 >
 > **This skill is the orchestration layer on top**: agent runtimes, dispatch workflows, completion
 > detection, and workflow templates. Validated against: cmux 0.64.17, codex-cli 0.144.1,
-> grok (Grok Build) 0.2.99, Claude Code 2.x.
+> grok (Grok Build) 0.2.99, kimi-code 0.26.0, Claude Code 2.x.
 
 ## Commands
 
@@ -37,7 +32,16 @@ templates from the main Claude Code instance.
    list; if not, `grok login`), and hooked into cmux: `cmux hooks setup grok -y` (installs
    `~/.grok/hooks/cmux-session.json` — a Notification hook for completion events + a PreToolUse
    Feed bridge)
-8. Confirm setup is complete
+8. **Kimi runtime**: verify `kimi` is installed (`which kimi`, `brew install kimi-code` — the
+   current-gen single-binary CLI; the legacy Python `kimi-cli` brew formula is superseded, don't
+   install it), logged in (`kimi login` — RFC 8628 device-code flow; URL + code print to STDERR,
+   exit 0 on success / 1 on cancel or failure; needs the user's browser once), and wired for
+   completion events MANUALLY — cmux's `hooks setup` does NOT support kimi (as of cmux 0.64.17),
+   so add a `Stop` hook to `~/.kimi-code/config.toml` (see Completion detection below for the
+   exact TOML). Then PROBE the wiring end-to-end (hooks are fail-open, so a broken hook drops
+   events silently): start the events listener, run a one-turn kimi in a pane, and assert a
+   `notification.requested` line lands in the events file
+9. Confirm setup is complete
 
 ### /cmux status — Check cmux integration status
 1. Run `cmux ping` to check if cmux is running
@@ -47,7 +51,9 @@ templates from the main Claude Code instance.
 5. Codex: `codex login status` + check `~/.codex/hooks.json` exists (cmux hooks wired)
 6. Grok: `grok models` (login + model list in one call) + check `~/.grok/hooks/cmux-session.json`
    exists (cmux hooks wired)
-7. Report status of each component
+7. Kimi: `kimi --version` + `kimi doctor` (config validity) + check `~/.kimi-code/config.toml`
+   contains the cmux `Stop` hook (manual wiring — no `cmux hooks setup kimi`)
+8. Report status of each component
 
 ### /cmux notify [message] — Send a manual notification
 1. Run: `cmux notify --title "Claude Code" --body "[message]"`
@@ -78,21 +84,22 @@ cmux clear-status "task"
 
 ## Agent Runtimes
 
-Orchestrated panes can run any of the three runtimes. Default is `claude`; select per agent with
-a `runtime:` prefix in `/cmux run` (e.g. `/cmux run codex:"task A" claude:"task B" grok:"task C"`).
+Orchestrated panes can run any of the four runtimes. Default is `claude`; select per agent with
+a `runtime:` prefix in `/cmux run` (e.g. `/cmux run codex:"task A" claude:"task B" grok:"task C"
+kimi:"task D"`).
 
-| | `claude` (default) | `codex` | `grok` |
-|---|---|---|---|
-| **Launch (autonomous)** | `claude --dangerously-skip-permissions` | `codex -s workspace-write -a never "<short prompt>"` | `grok --sandbox workspace --always-approve "<short prompt>"` |
-| **Full-bypass variant** | (same flag) | `--dangerously-bypass-approvals-and-sandbox` — ONLY on explicit user request; skips the OS sandbox | omit `--sandbox` (sandbox is OFF by default) + `--always-approve` — ONLY on explicit user request |
-| **Initial prompt** | send after startup (`sleep 5` first) | pass as CLI argument at launch — no startup race, no send-truncation risk | pass as CLI argument at launch; it queues behind the startup directory dialog and runs right after dismissal |
-| **Network in sandbox** | n/a | blocked by default in `workspace-write`; add `-c sandbox_workspace_write.network_access=true` for `npm install`-type tasks | ALLOWED in `workspace` profile. `read-only`/`strict` block child network on Linux only — it's a NO-OP on macOS |
-| **Read-only reviewer** | `claude --dangerously-skip-permissions` + review prompt | `codex review --base <branch>` or `codex review --uncommitted` — ALWAYS pass a scope flag (bare `codex review` hangs) | `grok --sandbox read-only --always-approve "<review prompt>"` (kernel-enforced read-only FS; no dedicated review subcommand) |
-| **Model override** | n/a (session model) | `-m <model>` (optional; defaults to `~/.codex/config.toml`) | `-m <model>` (`grok models` lists: `grok-4.5` default, `grok-composer-2.5-fast`); `--reasoning-effort <low\|medium\|high>` |
-| **Trust prompt** | non-git dirs only → send `1` + enter after 3s | pre-trusted via `[projects."<path>"] trust_level = "trusted"` in `~/.codex/config.toml`; if it still appears, approve interactively once | "Run Grok Build in a project directory?" picker on launch → send `1` + enter after ~3s (option `3` = don't ask again, sticky) |
-| **Completion signal** | cmux `notification.requested` event (automatic) | cmux `notification.requested` event (needs one-time `cmux hooks setup codex`) | cmux `notification.requested` event (needs one-time `cmux hooks setup grok`) — fires reliably but with `surface_id: null`, so per-pane matching is impossible; pair with read-screen |
-| **Screen "working" marker** | `✶ Misting…` (present-tense verb + elapsed time) | `Esc to interrupt` visible in footer | `◆ Thought for …` / `◆ Run …` activity lines streaming above the composer |
-| **Screen "done" marker** | `✻ Crunched/Worked/Sautéed for …` + `❯` prompt | working marker gone, composer input box returned | `Worked for Xs.` line + empty `❯` composer box + status bar `Grok 4.5 (high) · always-approve` |
+| | `claude` (default) | `codex` | `grok` | `kimi` |
+|---|---|---|---|---|
+| **Launch (autonomous)** | `claude --dangerously-skip-permissions` | `codex -s workspace-write -a never "<short prompt>"` | `grok --sandbox workspace --always-approve "<short prompt>"` | `kimi --auto` (auto-approves tools AND auto-handles questions — the unattended mode; `--yolo` approves tools but can still stall on AskUserQuestion) |
+| **Full-bypass variant** | (same flag) | `--dangerously-bypass-approvals-and-sandbox` — ONLY on explicit user request; skips the OS sandbox | omit `--sandbox` (sandbox is OFF by default) + `--always-approve` — ONLY on explicit user request | n/a — kimi has NO OS sandbox at all; `--auto`/`--yolo` are already unsandboxed. Only run in trusted dirs/worktrees |
+| **Initial prompt** | send after startup (`sleep 5` first) | pass as CLI argument at launch — no startup race, no send-truncation risk | pass as CLI argument at launch; it queues behind the startup directory dialog and runs right after dismissal | no CLI-arg prompt for interactive mode — launch, `sleep 5`, then send the pointer (claude-style). `-p "<prompt>"` exists but is headless-only and can't combine with `--auto`/`--yolo`/`--plan` |
+| **Network in sandbox** | n/a | blocked by default in `workspace-write`; add `-c sandbox_workspace_write.network_access=true` for `npm install`-type tasks | ALLOWED in `workspace` profile. `read-only`/`strict` block child network on Linux only — it's a NO-OP on macOS | unrestricted (no sandbox) |
+| **Read-only reviewer** | `claude --dangerously-skip-permissions` + review prompt | `codex review --base <branch>` or `codex review --uncommitted` — ALWAYS pass a scope flag (bare `codex review` hangs) | `grok --sandbox read-only --always-approve "<review prompt>"` (kernel-enforced read-only FS; no dedicated review subcommand) | `kimi --plan --auto -m kimi-code/k3` (pin the model — without `-m` the seat silently runs mid-tier K2.7). Plan mode prefers read-only tools but is SOFT (no kernel enforcement; Bash still allowed under regular rules). Weakest reviewer isolation of the four. NEVER `--plan --yolo` (stalls at plan-exit approval) |
+| **Model override** | n/a (session model) | `-m <model>` (optional; defaults to `~/.codex/config.toml`) | `-m <model>` (`grok models` lists: `grok-4.5` default, `grok-composer-2.5-fast`); `--reasoning-effort <low\|medium\|high>` | `-m <alias>` — aliases are NAMESPACED as registered by login in `~/.kimi-code/config.toml` (verified live 2026-07-17): `kimi-code/kimi-for-coding` (K2.7 Code — DEFAULT, mid-tier), `kimi-code/k3` (the frontend champion; effort low/high/max, default max), `kimi-code/kimi-for-coding-highspeed`. Bare `-m k3` ERRORS ("not configured"). For frontend work you MUST `-m kimi-code/k3` — the default is not the model the hype is about |
+| **Trust prompt** | non-git dirs only → send `1` + enter after 3s | pre-trusted via `[projects."<path>"] trust_level = "trusted"` in `~/.codex/config.toml` (`~/dev` already trusted); if it still appears, approve interactively once | "Run Grok Build in a project directory?" picker on launch → send `1` + enter after ~3s (option `3` = don't ask again, sticky) | none documented; first run needs one-time `kimi login` (device-code OAuth). Startup screens NOT yet live-validated — read-screen after launch before sending |
+| **Completion signal** | cmux `notification.requested` event (automatic) | cmux `notification.requested` event (needs one-time `cmux hooks setup codex`) | cmux `notification.requested` event (needs one-time `cmux hooks setup grok`) — fires reliably but with `surface_id: null`, so per-pane matching is impossible; pair with read-screen | NOT supported by `cmux hooks setup` — wire manually: a `[[hooks]]` `Stop` entry in `~/.kimi-code/config.toml` calling `cmux notify` (TOML below). Attribution unvalidated — treat like grok: event = "some kimi turn ended", read-screen to attribute |
+| **Screen "working" marker** | `✶ Misting…` (present-tense verb + elapsed time) | `Esc to interrupt` visible in footer | `◆ Thought for …` / `◆ Run …` activity lines streaming above the composer | not yet live-validated — identify empirically on first run (read-screen while it works) and update this row |
+| **Screen "done" marker** | `✻ Crunched/Worked/Sautéed for …` + `❯` prompt | working marker gone, composer input box returned | `Worked for Xs.` line + empty `❯` composer box + status bar `Grok 4.5 (high) · always-approve` | not yet live-validated — expect idle composer; verify empirically and update this row |
 
 **Codex safety default**: use `-s workspace-write -a never` (autonomy inside the OS sandbox), NOT
 the dangerous-bypass flag. It is the Codex analogue of Claude's `--dangerously-skip-permissions`
@@ -101,7 +108,7 @@ was removed; `-s workspace-write -a never` is the current form.
 
 **Grok safety default**: use `--sandbox workspace --always-approve` (auto-approve inside a
 kernel-enforced Seatbelt/Landlock sandbox: read everywhere, write CWD + `~/.grok/` + temp dirs,
-network allowed — so `gh`/`npm install` work without extra flags). Grok's sandbox is OFF
+network allowed — so `tsoul`/`gh`/`npm install` work without extra flags). Grok's sandbox is OFF
 by default, so a bare `--always-approve` is the full-bypass form — don't use it unless the user
 asks. `--permission-mode` (`default·acceptEdits·auto·dontAsk·bypassPermissions·plan`) is the
 finer-grained alternative to `--always-approve`. Other orchestration-relevant flags: `--worktree
@@ -109,37 +116,98 @@ finer-grained alternative to `--always-approve`. Other orchestration-relevant fl
 `--max-turns <N>`, `-p/--single` (headless one-shot; avoid for orchestration — use interactive
 panes), `--json-schema` (structured output, headless only).
 
+**Kimi safety default**: use `--auto` for orchestrated panes — it auto-approves tool calls AND
+auto-handles `AskUserQuestion`, so an unattended pane never stalls. `--yolo` (short `-y`; hidden
+aliases `--yes`, `--auto-approve`) skips approvals but the agent can still ask questions → stalls unattended;
+the two flags are mutually exclusive. CRITICAL: kimi has **no OS sandbox** (unlike codex's
+Seatbelt profile and grok's kernel sandbox). Hooks fail open on errors/timeouts, BUT a
+`PreToolUse` hook that exits 2 (or returns `permissionDecision: "deny"`) DOES hard-block the
+tool call — so a deny-list guard hook (block `git push`, `rm -rf`, writes outside the worktree)
+is the available mitigation for the missing sandbox; treat it as belt-and-suspenders, not a
+security boundary. Note kimi worktrees share the main repo's real `.git` and kimi CAN write it
+(codex/grok are accidentally protected by their sandboxes here) — put explicit git prohibitions
+in every kimi blueprint's Rules section. NEVER pair `--plan` with `--yolo`: plan-exit approval
+is NOT bypassed by yolo, so the pane stalls; plan mode pairs with `--auto` only. Dispatch kimi
+only into trusted directories, prefer a dedicated git worktree, and never hand it
+secrets-bearing cwds. Other orchestration-relevant surface
+(kimi-code 0.26.0): `--add-dir <dir>` (extra workspace roots), `--plan` (soft read-only planning
+mode), session resume via explicit id `-r session_<id>` / `-S <id>` — NOT `-c/--continue`
+("most recent session in cwd" is ambiguous when parallel panes + headless runs share a cwd, and
+all kimi instances share `~/.kimi-code` sessions/credentials), and bare `-S` opens an
+interactive picker (stalls unattended panes), `/goal` (TUI
+autonomous goal loop across turns), `/swarm` + native `AgentSwarm` tool (template-driven fan-out
+of up to 128 subagents, ramped concurrency, capped via `KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY` —
+NOTE: swarm subagents share ONE working tree, no worktree isolation, so partition file ownership
+in the template or keep swarms read-only/analysis-shaped), built-in subagents
+(`coder`/`explore`/`plan`), `AGENTS.md` instruction files (global `~/.kimi-code/AGENTS.md`,
+project `AGENTS.md`), `kimi doctor` (config validation). Auth: `kimi login` (device-code OAuth,
+managed Kimi Code service) — API keys are NOT read from shell env; they must live in
+`~/.kimi-code/config.toml` under `[providers.<name>]` (only the `KIMI_MODEL_*` env family is an
+explicit exception).
+
+**Kimi dispatch modes — pane vs headless vs YOLO (pick deliberately):**
+
+| Mode | Invocation | When to use it |
+|---|---|---|
+| **cmux pane, unattended** (orchestration default) | `kimi --auto [-m kimi-code/k3]` in a split pane, then send the prompt-file pointer | Orchestrated builders: user can intervene in the pane, screen is readable, Stop-hook completion events fire, session resumable. `--auto` never stalls (auto-approves tools AND auto-answers questions) |
+| **cmux pane, attended (YOLO)** | `kimi --yolo` (short `-y`) in a pane the user is watching | Semi-supervised sessions: skips tool approvals for speed, but the agent CAN still `AskUserQuestion` — the human answers, keeping design judgment in the loop. Never use for unattended panes (question = stall), and NEVER with `--plan` (plan-exit approval is not bypassed → stall). `--yolo` and `--auto` are mutually exclusive; both are toggleable mid-session via `/yolo` / `/auto`. A silent-decision caveat cuts the other way for `--auto`: it auto-answers every question, leaving no record of what was decided — front-load design decisions into the blueprint |
+| **Headless one-shot** (from the orchestrator's own shell) | `kimi -p "<prompt>"` (± `-m kimi-code/k3`, `--output-format stream-json`) | Quick side-tasks WITHOUT burning a pane: scouting summaries, single-file generations, verdicts to parse. stream-json = one JSON per line on stdout; thinking is DROPPED in this mode (not redirected), tool progress goes to stderr. In default text mode, assistant text → stdout, thinking/progress → stderr. Validated live 2026-07-17 — kimi is the ONLY runtime safe to call headless (codex parks forever without a TTY; claude/grok headless modes are avoided by policy). `-p` implies auto-permission (static deny rules still apply); it REJECTS `--yolo`/`--auto`/`--plan`. Each run prints a `kimi -r session_<id>` resume hint — reuse it to continue the same context across one-shots |
+| **Headless goal mode** | `kimi -p "/goal <objective with finish line + evidence>"` | Scriptable autonomous loop: exits `0` = goal complete, `3` = blocked, `6` = paused — branch on the exit code in orchestration scripts. Goal must name the finish line and its evidence, or it blocks immediately |
+
 ---
 
-## Strategy selection — which provider gets which work (validated 2026-07-15)
+## Strategy selection — which provider gets which work (validated 2026-07-15; kimi added 2026-07-17)
 
-Before dispatching multi-provider work, pick a strategy. The profile below was validated live
-against published benchmarks (SWE-bench Pro, Terminal Bench, Coding Agent Index) and a five-wave
-production build where cross-family review caught a real defect in every single round.
+Before dispatching multi-provider work, pick a strategy. Full evidence + benchmark table:
+TeamSoul KB `knowledge/2026-07-15-multi-provider-agent-routing.md` (`tsoul vault get`).
 
-**Capability profile (July 2026 — gpt-5.6-sol, grok-4.5, Fable 5/Opus 4.8):**
+**Capability profile (July 2026 — gpt-5.6-sol, grok-4.5, Fable 5/Opus 4.8, Kimi K3/K2.7):**
 
 | Provider | Route TO it | Route AWAY from it |
 |---|---|---|
 | `claude` (Fable/Opus) | Shared-subsystem, convention-dense, long-horizon multi-file work; anything needing repo/skill/ADR context | High-volume mechanical bulk (expensive per token) |
 | `codex` (gpt-5.6-sol) | First-class builder for well-specified, self-contained tasks (blueprint prompt); THE purpose-built reviewer (`codex review --base`) | Tasks needing deep repo-convention context it wasn't given |
 | `grok` (grok-4.5) | Mechanical/high-volume work, test writing, terminal/CLI-flavored tasks (4.2× token efficiency, 80 TPS, TB 83.3%); read-only adversarial validation | Convention-dense server code (lowest SWE-bench Pro of the three) |
+| `kimi` (`-m kimi-code/k3`; default K2.7) | Frontend/UI implementation — K3 is #1 on Arena.ai Frontend Code (Elo 1,679 > Fable 5's 1,631; #1 in 6/7 frontend domains, independent crowd-voted, Jul 2026). Cheap implementation lane (~$0.94/task ≈ ½ Opus; K2.7 $0.95/$4 per M) | Unattended long-horizon backend work (community: drifts, refactors what it shouldn't, has commented out failing tests instead of fixing); anything needing sandbox guarantees (NO OS sandbox); reviewer seats (weakest isolation). Default K2.7 is mid-tier (independent: rank 17/70 SWE-bench) — don't route hard cores to it |
+
+**Kimi caveats (evidence freshness):** K3 launched 2026-07-16 — the Arena Elo is days old and
+can drift; SWE/Terminal numbers for K3 are vendor-claimed only so far (TB 2.1 88.3 self-reported).
+Community pattern that works: frontier model plans → kimi implements to a tight blueprint (its
+weakness is judgment under vague prompts, not code generation). K3 needs a paid plan (Moderato+).
 
 **Strategies (pick per situation):**
-1. **Capability-routed pipeline (DEFAULT):** route each task by the table above; every branch gets
-   cross-family review (`codex review` + grok read-only + claude convention check). Invariant:
-   the author's model family NEVER validates its own branch.
+1. **Capability-routed pipeline (DEFAULT):** route each task by the table above — frontend/UI
+   slices now go to kimi with `-m kimi-code/k3`; every branch gets cross-family review (`codex review` + grok
+   read-only + claude convention check). Invariant: the author's model family NEVER validates
+   its own branch. Kimi branches especially need the sad-path review pass (check for disabled/
+   commented-out tests — a reported failure mode).
 2. **Fixed-role assembly line:** one builds / one tests / one validates. Predictable; wastes edges.
-3. **Tournament:** all three implement the same hard design in separate worktrees; a judge panel
-   picks the winner. Expensive — reserve for one-off uncertain design calls.
-4. **Grok-native fan-out:** for big mechanical sweeps, ONE grok pane using its own 8-subagent
-   git-worktree orchestrator; codex+claude review the reconciled result.
-5. **Cost-tiering:** `-m gpt-5.6-luna` / `grok-composer-2.5-fast` for bulk scouting/boilerplate;
-   sol/fable + high effort only for hard cores.
+3. **Tournament:** the contenders implement the same hard design in separate worktrees; a judge
+   panel picks the winner. Expensive — reserve for one-off uncertain design calls. For a
+   design-heavy UI page, a claude × kimi-k3 two-way is the cheapest high-signal tournament.
+4. **Native fan-out:** for big mechanical sweeps, ONE pane using the runtime's own orchestrator —
+   grok's 8-subagent git-worktree fan-out, or kimi's `AgentSwarm` (up to 128 template-driven
+   subagents, BUT one shared working tree: partition file ownership in the template, or keep
+   swarms analysis/read-shaped). Other families review the reconciled result.
+5. **Cost-tiering:** `-m gpt-5.6-luna` / `grok-composer-2.5-fast` / kimi default K2.7 for bulk
+   scouting/boilerplate; sol/fable/k3 + high effort only for hard cores.
 
 **Hard rules regardless of strategy:** one writer per git worktree; blueprint prompt files
-(self-contained: context, spec, file ownership, edge cases, tests, rules); task-tracker
-bookkeeping (claim → build → handoff-to-review with PR + evidence) when the work is tracked.
+(self-contained: context, spec, file ownership, edge cases, tests, rules); tsoul bookkeeping
+(claim → build → handoff-to-review with PR + evidence) when the work is tracked in TeamSoul;
+at most ONE grok pane and ONE kimi pane per workspace when relying on completion events (their
+events can't be attributed per-pane — two same-runtime panes force read-screen polling of both);
+kimi AgentSwarm runs emit ONE Stop event for the whole swarm (subagent completions fire
+`Notification` hooks, not `Stop`) — don't read the events file as per-subagent progress; mind
+account quotas when four providers fan out at once (kimi panes + headless `-p` runs share one
+OAuth account; K3 is plan-gated).
+
+**K3 routing re-validation trigger:** the frontend→K3 edge rests on a days-old crowd Elo that
+measures single-shot output appeal, not blueprint-driven agentic delivery. Before K3 becomes
+the standing default: re-check its Arena standing and run a claude × kimi-k3 tournament on 2-3
+real repo frontend slices; record the outcome + date in the TeamSoul KB routing note. Also
+benchmark `kimi-code/kimi-for-coding-highspeed` for the bulk/cost-tier lane (registered by
+login but unrouted; speed/pricing profile unverified).
 
 **Codex dispatch gotchas (verified live 2026-07-16, codex 0.144.1):**
 - **Codex is TTY-only in practice.** Both `codex review` and `codex exec` piped from a
@@ -167,7 +235,7 @@ bookkeeping (claim → build → handoff-to-review with PR + evidence) when the 
 
 Spawns interactive agent sessions in split panes within the **current workspace**, dispatches
 prompts, and lets the user interact with each agent. Each prompt may be prefixed `claude:`,
-`codex:`, or `grok:`; unprefixed defaults to `claude`.
+`codex:`, `grok:`, or `kimi:`; unprefixed defaults to `claude`.
 
 **Workflow:**
 
@@ -216,6 +284,17 @@ prompts, and lets the user interact with each agent. Each prompt may be prefixed
    # the queued prompt argument runs immediately after the picker is dismissed
    ```
 
+   **kimi** — no CLI-arg prompt in interactive mode; launch-then-send like claude:
+   ```bash
+   cmux send --surface surface:N "kimi --auto -m kimi-code/k3"   # k3 for frontend work; omit -m for default K2.7
+   cmux send-key --surface surface:N enter
+   # Startup screens not yet live-validated — read-screen before sending the task:
+   sleep 5
+   cmux read-screen --surface surface:N --lines 15   # confirm idle composer, no login/consent screen
+   cmux send --surface surface:N "read $PROMPT_DIR/agent-3-frontend.md and implement it"
+   cmux send-key --surface surface:N enter
+   ```
+
    **claude** — launch, handle startup prompts, then send the task:
    ```bash
    cmux send --surface surface:M 'claude --dangerously-skip-permissions'
@@ -262,9 +341,26 @@ prompts, and lets the user interact with each agent. Each prompt may be prefixed
 
 ### Completion detection (event-driven — the old read-screen polling is the fallback)
 
-All three runtimes emit a cmux `notification.requested` event when an agent turn ends (Claude via
-the cmux claude wrapper automatically; Codex via the one-time `cmux hooks setup codex`; Grok via
-the one-time `cmux hooks setup grok`). Subscribe once, before dispatch:
+Claude, Codex, and Grok emit a cmux `notification.requested` event when an agent turn ends
+(Claude via the cmux claude wrapper automatically; Codex via the one-time `cmux hooks setup
+codex`; Grok via the one-time `cmux hooks setup grok`). **Kimi is NOT in cmux's supported hooks
+list** (checked against cmux 0.64.17: codex, grok, opencode, gemini, copilot, … but no kimi) —
+wire it manually via kimi's own Claude-Code-style hook system. Add to
+`~/.kimi-code/config.toml`:
+
+```toml
+[[hooks]]
+event = "Stop"    # fires when the model ends its turn
+command = "/Applications/cmux.app/Contents/Resources/bin/cmux notify --title 'Kimi' --body 'turn ended'"
+timeout = 10
+```
+
+The hook runs as a child of the kimi process inside the pane, so the cmux socket accepts it
+(only processes started inside cmux can connect — use the absolute binary path since hook PATH
+is not guaranteed). Kimi hooks are fail-open (errors/timeouts never block the agent), so a
+broken hook silently drops events — treat kimi completion events as best-effort like codex, and
+pair with read-screen. Whether the event carries a usable `surface_id` is unvalidated; assume
+grok-style null attribution until proven otherwise. Subscribe once, before dispatch:
 
 ```bash
 cmux events --name notification.requested --no-heartbeat --no-ack > "$PROMPT_DIR/events.jsonl" &
@@ -313,7 +409,7 @@ events channel is unavailable):
 - Do NOT use blocking `sleep` loops in the foreground — schedule checks with `run_in_background`
   so the orchestrator stays responsive.
 
-**Prompt engineering (MANDATORY for all orchestrated agents, both runtimes):**
+**Prompt engineering (MANDATORY for all orchestrated agents, all four runtimes):**
 
 Agents start with ZERO context — they don't see the orchestrator's conversation, design decisions,
 or prior work. Every prompt file must be a **self-contained blueprint**, not a task list.
@@ -349,7 +445,9 @@ context that would cause the agent to drift.
 - Parallel writers → separate file ownership per agent; if two agents must touch the same files,
   serialize them or give each its own git worktree (one writer per tree)
 - Do NOT use `claude -p` or `codex exec` (non-interactive modes) — use interactive sessions so
-  the user can intervene in the pane if needed
+  the user can intervene in the pane if needed. EXCEPTION: `kimi -p` is validated for headless
+  one-shots from the orchestrator shell (see Kimi dispatch modes table) — but orchestrated
+  multi-step builders still belong in interactive panes
 - Create splits in the **current workspace** unless the user asks for a new workspace; always
   pass `--focus false` and never call `select-workspace`/`focus-pane` unless the user asks
 - `cmux codex-teams` (native Codex-subagent panes) exists but is still fragile upstream
@@ -422,11 +520,13 @@ Variant — **implement × review handoff**: Claude (or the orchestrator) implem
 pane reviews the diff before commit. Collect both verdicts with `read-screen`, synthesize
 agreement/disagreement for the user, and let the user arbitrate conflicts.
 
-Variant — **three-model panel**: add a third pane with
+Variant — **multi-family panel**: add a third pane with
 `grok --sandbox read-only --always-approve "<review prompt>"` for an xAI-family opinion
-(kernel-enforced read-only, so it can't touch the tree). Three independent model families
-agreeing is a much stronger signal than any two; disagreements pinpoint the judgment calls
-worth escalating to the user.
+(kernel-enforced read-only, so it can't touch the tree), and optionally a fourth with
+`kimi --plan --auto -m kimi-code/k3` + a review prompt (pin the model or the seat runs mid-tier
+K2.7; SOFT read-only only — no kernel enforcement — so reserve the kimi seat for trusted
+trees; strongest on UI/frontend diffs where K3's judgment is best-in-class). Independent model families agreeing is a much stronger signal than any
+two instances of one; disagreements pinpoint the judgment calls worth escalating to the user.
 
 ### /cmux debug — Parallel bug investigation
 Spawns 2 agents to investigate a bug from different angles:
@@ -551,3 +651,12 @@ cmux browser snapshot --surface surface:N --interactive --compact   # verify, ad
   `cmux hooks setup codex -y` run once, repo paths trusted in `~/.codex/config.toml`
 - For the grok runtime: grok CLI on PATH (cmux bundles it; validated: 0.2.99 "Grok Build"),
   logged in (`grok models`), `cmux hooks setup grok -y` run once
+- For the kimi runtime: `brew install kimi-code` (validated: 0.26.0; NOT the legacy `kimi-cli`
+  formula — that's the superseded Python CLI), logged in once via `kimi login` (device-code
+  OAuth; K3 model needs a Moderato+ subscription), manual `Stop` hook in
+  `~/.kimi-code/config.toml` (no `cmux hooks setup kimi` support yet — re-check on cmux
+  upgrades; login MERGES config.toml and preserves the hook — verified 2026-07-17). Headless
+  `-p` + tool-use + `kimi-code/k3` verified live 2026-07-17 (agentic file-write smoke test
+  passed; session resume hint `kimi -r session_<id>` printed at end of each `-p` run). Fast 0.x
+  release cadence (4 releases in 4 days mid-July 2026): `kimi upgrade` / `brew upgrade
+  kimi-code` often, and re-verify flags after major bumps
