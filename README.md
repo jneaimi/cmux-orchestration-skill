@@ -8,8 +8,9 @@ Claude Code session.
 
 Everything in this skill was validated live (versions pinned in the skill body) and includes the
 hard-won gotchas you'd otherwise rediscover the slow way: send-length truncation, alternate-screen
-scrollback loss, sandbox-vs-verdict-file conflicts, worktree `.git` write failures, MCP startup
-stalls, and per-runtime completion markers.
+scrollback loss, sandbox-vs-verdict-file conflicts, worktree `.git` write failures, MCP
+approval-modal freezes and startup stalls (with the `~/.codex/config.toml` root-cause fix), and
+per-runtime completion markers.
 
 ## What's in the box
 
@@ -19,8 +20,10 @@ stalls, and per-runtime completion markers.
   `-p` one-shots, scriptable `/goal` mode with branchable exit codes) and manual `Stop`-hook
   wiring for completion events.
 - **Provider strategy selection** — a capability-routing table (which model family gets which
-  kind of work) plus five orchestration strategies, from the default capability-routed pipeline
-  to tournaments and cost-tiering. Frontend/UI slices route to Kimi K3 (`-m kimi-code/k3` —
+  kind of work), a **tier × use-case matrix** that picks the *cheapest tier that clears the bar*
+  and escalates only on explicit difficulty triggers (model/tier is the primary cost lever,
+  reasoning-effort the secondary dial), plus five orchestration strategies, from the default
+  capability-routed pipeline to tournaments and cost-tiering. Frontend/UI slices route to Kimi K3 (`-m kimi-code/k3` —
   the namespaced pin matters; the CLI default model is a different, mid-tier model). Core
   invariant: *the author's model family never validates its own branch* — cross-family review
   caught a real defect in every round of a five-wave production build, and Kimi K3's own

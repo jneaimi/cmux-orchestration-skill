@@ -175,6 +175,52 @@ can drift; SWE/Terminal numbers for K3 are vendor-claimed only so far (TB 2.1 88
 Community pattern that works: frontier model plans → kimi implements to a tight blueprint (its
 weakness is judgment under vague prompts, not code generation). K3 needs a paid plan (Moderato+).
 
+### Pick the tier — difficulty × use-case (don't default to high)
+
+Provider (above) is only half the choice; the other half is **tier + effort**. Default to the
+**cheapest tier that clears the bar** and escalate only on a trigger. Model/tier is the primary
+cost lever; **reasoning-effort is a secondary dial** — in the observed builds it was left at sensible
+defaults (Codex `medium`, Kimi `max`, Grok default) and the *tier*, not the dial, was moved.
+
+**Escalate to a HIGH tier (Opus/Fable · sol-high · grok-4.5-high · k3-max) ONLY when any of:**
+convention-dense / shared-subsystem code · needs repo+ADR+skill context · long-horizon multi-file ·
+ambiguous / underspecified (judgment-heavy) · high-stakes / irreversible · on the critical shared
+path · output is **not** verified downstream. **None of those → drop a tier.**
+
+**Why cheap is safe — the review net licenses it.** Routing the easy ~70% to cheap/fast lanes is
+safe *because* the author≠validator cross-family review (Strategy 1) sits under everything. Remove
+the review and you must move every row up a tier. Reversibility + verified-downstream is the single
+biggest "drop a tier" signal.
+
+| Use-case | Difficulty signal | Provider · tier | Effort | Strategy |
+|---|---|---|---|---|
+| Convention-dense core / shared subsystem | repo+ADR context, long-horizon, critical path | **Claude Opus/Fable** | high | Claude owns it; cross-family review |
+| Self-contained feature / migration (blueprint-able) | well-specified, disjoint | **Codex gpt-5.6-sol** | medium | single-builder + cross-family review |
+| Mechanical sweep / codemod / boilerplate | high-volume, low-judgment | **Grok grok-4.5** → `grok-composer-2.5-fast` for pure bulk | low / default | Grok-native fan-out |
+| Test / sad-path suites | verifiable downstream | **Grok grok-4.5** | default | capability-routed |
+| Frontend / UI implementation | visual judgment | **Kimi `-m kimi-code/k3`** (pin it — default K2.7 is mid-tier) | max | trusted worktree only |
+| Adversarial branch review | correctness · gates · races | **Codex `review --base`** + **Grok `--sandbox read-only`** | codex medium | cross-family; author family excluded |
+| Safe validation on an untrusted tree | must not mutate | **Grok `--sandbox read-only`** (kernel-enforced) | default | validator (NOT Kimi — soft RO only) |
+| Bulk scouting / research / inventory | parallelizable, verified downstream | `gpt-5.6-luna` · `grok-composer-2.5-fast` · cheap researcher subagent (`haiku`/`sonnet`) | low | cost-tier / background fan-out |
+| "Give me different angles" / meta-analysis | wants diverse judgment | **Opus + Codex + Grok** in parallel | — | angle panel; convergence = confidence |
+| Genuinely uncertain hard design | no clear best builder | all families, separate worktrees | high | tournament — reserve (expensive) |
+| Fix round after request-changes | spec'd by the reviewer's findings | **same builder family as the branch** | as-builder | follow-up, no re-route |
+| Long-horizon unattended backend | judgment under vague prompts | **Claude** (NOT Kimi/Grok — drift) | high | capability-routed |
+
+**Effort dial (secondary):** bump `--reasoning-effort high` (grok) / a higher codex effort ONLY for
+the hard core or the adversarial-verify pass on a subtle finding; drop to `low` for mechanical
+sweeps on a capable model. Kimi K3 defaults to `max`; leave it.
+
+**Probation lane:** a newly-released model with vendor-only benchmarks (e.g. K3 at launch) is routed
+**conservatively** — narrow domain + an extra review check — until independently validated; record
+the outcome + date in the KB routing note.
+
+**Common over/under-provisioning traps** (from real runs): treating Codex as *only* a reviewer (it's
+a first-class builder now, ~⅓ cost); treating Grok as "weak" (it's **mis-routed, not weak** — wrong
+for convention-dense code, right for mechanical/test/CLI work); paying Fable-high rates on the easy
+majority (that's what cost-tiering exists to stop); routing all Kimi work to the CLI default K2.7
+(under-provisions frontend — pin `k3`).
+
 **Strategies (pick per situation):**
 1. **Capability-routed pipeline (DEFAULT):** route each task by the table above — frontend/UI
    slices now go to kimi with `-m kimi-code/k3`; every branch gets cross-family review (`codex review` + grok
@@ -216,8 +262,27 @@ login but unrouted; speed/pricing profile unverified).
 - **`codex review --base BRANCH "prompt"` errors** — `--base` and a positional prompt are
   mutually exclusive in this version. For a focused review brief, use interactive
   `codex -a never "read <prompt-file> and do it"` instead of the review subcommand.
-- **Disable unindexed MCP servers for review runs**: `-c mcp_servers={}` — a gitnexus MCP
-  with a never-indexed repo stalls the run at startup indefinitely.
+- **MCP tool approvals stall panes — fix it in config, not per-run (verified live
+  2026-07-20).** `-a never` covers shell/exec approvals ONLY; MCP tool calls prompt
+  separately, and the default per-tool `approval_mode` (`auto`) prompts for ANY tool that
+  doesn't declare `read_only_hint` — so an orchestrated pane hits "Allow the … MCP server to
+  run tool X?" modals, and a `cmux send` into that modal can freeze the pane. Root-cause fix
+  in `~/.codex/config.toml` per server (value names read BACKWARDS — `"approve"` =
+  pre-approved/never asks; `"prompt"` = always asks; `"writes"` = asks unless
+  read_only_hint):
+  ```toml
+  [mcp_servers.gitnexus]
+  default_tools_approval_mode = "approve"  # never prompt for this server's tools
+  tool_timeout_sec = 30                    # cut a hung MCP call instead of freezing the pane
+  ```
+  Per-run `-c mcp_servers={}` (disable all servers) remains the fallback for one-offs — but
+  note the override can silently fail to parse through cmux-send quoting; config is reliable.
+  Two residual noise sources: a NEVER-indexed repo still stalls gitnexus at startup
+  (`gitnexus analyze <path>` once), and a STALE index returns "symbol not found" that sends
+  the agent into re-query loops (reindex after merges). `gitnexus analyze` also writes
+  onboarding files into the repo (`.gitignore` edit + AGENTS.md/CLAUDE.md/.claude/) — revert
+  the tracked `.gitignore` change and ignore `.gitnexus/` via `.git/info/exclude` to keep the
+  tree clean for orchestrated builders.
 - **Reviewer sandbox vs verdict file:** codex `-s read-only` blocks ALL writes including /tmp,
   so a reviewer told to write a verdict file can't. Use `-s workspace-write -a never` launched
   from /tmp-adjacent cwd (its writable roots include /tmp + $TMPDIR) — the review prompt itself
