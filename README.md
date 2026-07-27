@@ -3,8 +3,8 @@
 A Claude Code skill (`/cmux`) that turns [cmux](https://github.com/manaflow-ai/cmux) into a
 multi-agent orchestration surface: spawn **Claude Code**, **OpenAI Codex CLI**, **xAI Grok
 Build**, and **Moonshot Kimi Code** agents in split panes, dispatch self-contained blueprint
-prompts, detect completion via cmux events, and collect results — all driven from your main
-Claude Code session.
+prompts, detect completion via file markers (with cmux events as a signal), and collect results —
+all driven from your main Claude Code session.
 
 Everything in this skill was validated live (versions pinned in the skill body) and includes the
 hard-won gotchas you'd otherwise rediscover the slow way: send-length truncation, alternate-screen
@@ -34,13 +34,17 @@ per-runtime completion markers.
   file is a self-contained spec).
 - **Event-driven completion detection** — `cmux events` subscription, per-pane `surface_id`
   matching, and the runtime-specific fallbacks for when events lie or don't fire.
-- **File-based collection + a ready-made fan-out helper** — the default that removes most of the
-  friction: every agent writes `verdict-<name>.md` + a `.done` marker as its last action, so the
-  orchestrator polls a file instead of scraping the screen (race-free, provider-agnostic, and it
-  survives a pane that auto-closes on finish). `scripts/cmux-fan.sh` bakes the whole contract in
-  (`init` / `prompt` / `send` / `wait` / `collect`) so the four recurring `send` footguns —
-  screen-scraping, `Surface not found` retries, `===`/`{}` eval-mangling, and the missing macOS
-  `timeout(1)` — become structurally impossible. Plus a **context-hygiene playbook** for
+- **File-based collection + a ready-made fan-out helper (the default dispatch path)** — every
+  agent writes `verdict-<name>.md` + a `.done` marker as its last action, so the orchestrator
+  polls a file instead of scraping the screen (race-free, provider-agnostic, and it survives a
+  pane that auto-closes on finish). `scripts/cmux-fan.sh` now owns the whole dispatch loop
+  (`init` / `prompt` / `launch` / `send` / `wait` / `collect`): `launch` encapsulates
+  per-runtime startup (claude/kimi launch-then-send; codex/grok prompt-as-arg + picker
+  dismissal), and the hardened `send` verifies submission and resends Enter on the universal
+  Enter-drop footgun. The six recurring `send`/dispatch footguns — screen-scraping, `Surface
+  not found` retries, `===`/`{}` eval-mangling, the missing macOS `timeout(1)`, dropped Enters,
+  and per-runtime startup handling — become structurally impossible on the default path. Plus a
+  **context-hygiene playbook** for
   multi-round build→review→fix pipelines (disposable panes, fresh reviewer per round, marker-file
   state) and an **explicit model-naming rule** — every dispatch pins its model/tier so a lane
   never silently runs the top tier by omission.

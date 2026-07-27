@@ -1,3 +1,8 @@
+---
+name: cmux
+description: Orchestrate multi-agent cmux sessions (Claude/Codex/Grok/Kimi) in split panes — dispatch, completion detection, cross-model review, browser panes, workflow templates. Use for "orchestrate agents", "split panes", "cross-model review", "fan out agents", "parallel review/debug", cmux setup/status/notify.
+---
+
 # cmux Terminal Setup (/cmux)
 
 Manage and configure cmux terminal workspaces for Claude Code projects. Orchestrate multi-agent
@@ -149,38 +154,27 @@ explicit exception).
 
 | Mode | Invocation | When to use it |
 |---|---|---|
-| **cmux pane, unattended** (orchestration default) | `kimi --auto [-m kimi-code/k3]` in a split pane, then send the prompt-file pointer | Orchestrated builders: user can intervene in the pane, screen is readable, Stop-hook completion events fire, session resumable. `--auto` never stalls (auto-approves tools AND auto-answers questions) |
-| **cmux pane, attended (YOLO)** | `kimi --yolo` (short `-y`) in a pane the user is watching | Semi-supervised sessions: skips tool approvals for speed, but the agent CAN still `AskUserQuestion` — the human answers, keeping design judgment in the loop. Never use for unattended panes (question = stall), and NEVER with `--plan` (plan-exit approval is not bypassed → stall). `--yolo` and `--auto` are mutually exclusive; both are toggleable mid-session via `/yolo` / `/auto`. A silent-decision caveat cuts the other way for `--auto`: it auto-answers every question, leaving no record of what was decided — front-load design decisions into the blueprint |
-| **Headless one-shot** (from the orchestrator's own shell) | `kimi -p "<prompt>"` (± `-m kimi-code/k3`, `--output-format stream-json`) | Quick side-tasks WITHOUT burning a pane: scouting summaries, single-file generations, verdicts to parse. stream-json = one JSON per line on stdout; thinking is DROPPED in this mode (not redirected), tool progress goes to stderr. In default text mode, assistant text → stdout, thinking/progress → stderr. Validated live 2026-07-17 — kimi is the ONLY runtime safe to call headless (codex parks forever without a TTY; claude/grok headless modes are avoided by policy). `-p` implies auto-permission (static deny rules still apply); it REJECTS `--yolo`/`--auto`/`--plan`. Each run prints a `kimi -r session_<id>` resume hint — reuse it to continue the same context across one-shots |
-| **Headless goal mode** | `kimi -p "/goal <objective with finish line + evidence>"` | Scriptable autonomous loop: exits `0` = goal complete, `3` = blocked, `6` = paused — branch on the exit code in orchestration scripts. Goal must name the finish line and its evidence, or it blocks immediately |
+| **cmux pane, unattended** (orchestration default) | `kimi --auto [-m kimi-code/k3]` in a split pane, then send the pointer | Orchestrated builders: readable/interruptible pane, Stop-hook events fire, session resumable. `--auto` never stalls (auto-approves tools AND auto-answers questions) — but it leaves NO record of what it decided, so front-load design decisions into the blueprint |
+| **cmux pane, attended (YOLO)** | `kimi --yolo` (short `-y`) in a watched pane | Semi-supervised: skips tool approvals but the agent CAN still `AskUserQuestion` — the human answers, keeping judgment in the loop. Never unattended (question = stall), NEVER with `--plan` (plan-exit approval not bypassed → stall). `--yolo`/`--auto` are mutually exclusive; toggle mid-session via `/yolo`·`/auto` |
+| **Headless one-shot** (orchestrator's own shell) | `kimi -p "<prompt>"` (± `-m kimi-code/k3`, `--output-format stream-json`) | Side-tasks WITHOUT a pane: scouting, single-file gen, verdicts to parse. stream-json = one JSON/line on stdout, thinking DROPPED, tool progress → stderr; text mode = assistant→stdout, thinking/progress→stderr. Validated 2026-07-17 — the ONLY runtime safe headless (codex parks without a TTY; claude/grok headless avoided by policy). `-p` implies auto-permission (static deny rules still apply) and REJECTS `--yolo`/`--auto`/`--plan`. Prints a `kimi -r session_<id>` resume hint to chain one-shots |
+| **Headless goal mode** | `kimi -p "/goal <objective + finish line + evidence>"` | Scriptable loop: exit `0` = complete, `3` = blocked, `6` = paused — branch on it. Goal must name its finish line + evidence or it blocks immediately |
 
 ---
 
-## Strategy selection — which provider gets which work (validated 2026-07-15; kimi added 2026-07-17)
+## Strategy selection — which provider gets which work
 
-Before dispatching multi-provider work, pick a strategy. Full evidence + benchmark table:
-TeamSoul KB `knowledge/2026-07-15-multi-provider-agent-routing.md` (`tsoul vault get`).
-
-**Capability profile (July 2026 — gpt-5.6-sol, grok-4.5, Fable 5/Opus 4.8, Kimi K3/K2.7):**
-
-| Provider | Route TO it | Route AWAY from it |
-|---|---|---|
-| `claude` (Fable/Opus) | Shared-subsystem, convention-dense, long-horizon multi-file work; anything needing repo/skill/ADR context | High-volume mechanical bulk (expensive per token) |
-| `codex` (gpt-5.6-sol) | First-class builder for well-specified, self-contained tasks (blueprint prompt); THE purpose-built reviewer (`codex review --base`) | Tasks needing deep repo-convention context it wasn't given |
-| `grok` (grok-4.5) | Mechanical/high-volume work, test writing, terminal/CLI-flavored tasks (4.2× token efficiency, 80 TPS, TB 83.3%); read-only adversarial validation | Convention-dense server code (lowest SWE-bench Pro of the three) |
-| `kimi` (`-m kimi-code/k3`; default K2.7) | Frontend/UI implementation — K3 is #1 on Arena.ai Frontend Code (Elo 1,679 > Fable 5's 1,631; #1 in 6/7 frontend domains, independent crowd-voted, Jul 2026). Cheap implementation lane (~$0.94/task ≈ ½ Opus; K2.7 $0.95/$4 per M) | Unattended long-horizon backend work (community: drifts, refactors what it shouldn't, has commented out failing tests instead of fixing); anything needing sandbox guarantees (NO OS sandbox); reviewer seats (weakest isolation). Default K2.7 is mid-tier (independent: rank 17/70 SWE-bench) — don't route hard cores to it |
-
-**Kimi caveats (evidence freshness):** K3 launched 2026-07-16 — the Arena Elo is days old and
-can drift; SWE/Terminal numbers for K3 are vendor-claimed only so far (TB 2.1 88.3 self-reported).
-Community pattern that works: frontier model plans → kimi implements to a tight blueprint (its
-weakness is judgment under vague prompts, not code generation). K3 needs a paid plan (Moderato+).
-
-### Pick the tier — difficulty × use-case (don't default to high)
-
-Provider (above) is only half the choice; the other half is **tier + effort**. Default to the
-**cheapest tier that clears the bar** and escalate only on a trigger. Model/tier is the primary
-cost lever; **reasoning-effort is a secondary dial** — in the observed builds it was left at sensible
-defaults (Codex `medium`, Kimi `max`, Grok default) and the *tier*, not the dial, was moved.
+**The volatile routing evidence lives in the KB, not here.** The per-provider route-TO/route-AWAY
+profile, the difficulty×use-case → provider·tier decision table, tier-escalation triggers, the
+"cheap is safe because cross-family review sits under it" rationale, the pricing/benchmark snapshot,
+and the over/under-provisioning traps all live in the TeamSoul KB note
+`knowledge/2026-07-15-multi-provider-agent-routing.md` — it rots monthly and applies equally to
+`/vmux`, so it is not duplicated here. Read it for the actual routing decision:
+```bash
+tsoul vault get knowledge/2026-07-15-multi-provider-agent-routing.md
+```
+What stays below is only the cmux-specific dispatch **mechanics** — the per-runtime launch flags,
+the "every dispatch names its model" rule, the completion-signal / pane-attribution quirks, and the
+codex TTY-only gotchas. (Runtime capabilities validated 2026-07-15; kimi added 2026-07-17.)
 
 **EVERY dispatch NAMES its model explicitly — all four providers** (retro lesson 2026-07-27:
 six waves ran every claude lane on the bare session default — the TOP-tier model — because the
@@ -194,64 +188,10 @@ launch without an explicit model choice is a bug in the dispatch, not a neutral 
 | grok | `-m <model>` / `--reasoning-effort` | `grok-4.5` default effort | `grok-4.5 --reasoning-effort high` | `grok-composer-2.5-fast` |
 | kimi | `-m <alias>` | `-m kimi-code/k3` (frontend) | k3 effort max (default) | bare default (K2.7) for mechanical only — NEVER frontend |
 
-Reviewer seats follow the same table (codex sol-medium + grok default are the proven review pair);
-fix-round REVERIFY seats can often drop a tier — they check a named diff against a named brief.
-
-**Escalate to a HIGH tier (Opus/Fable · sol-high · grok-4.5-high · k3-max) ONLY when any of:**
-convention-dense / shared-subsystem code · needs repo+ADR+skill context · long-horizon multi-file ·
-ambiguous / underspecified (judgment-heavy) · high-stakes / irreversible · on the critical shared
-path · output is **not** verified downstream. **None of those → drop a tier.**
-
-**Why cheap is safe — the review net licenses it.** Routing the easy ~70% to cheap/fast lanes is
-safe *because* the author≠validator cross-family review (Strategy 1) sits under everything. Remove
-the review and you must move every row up a tier. Reversibility + verified-downstream is the single
-biggest "drop a tier" signal.
-
-| Use-case | Difficulty signal | Provider · tier | Effort | Strategy |
-|---|---|---|---|---|
-| Convention-dense core / shared subsystem | repo+ADR context, long-horizon, critical path | **Claude Opus/Fable** | high | Claude owns it; cross-family review |
-| Self-contained feature / migration (blueprint-able) | well-specified, disjoint | **Codex gpt-5.6-sol** | medium | single-builder + cross-family review |
-| Mechanical sweep / codemod / boilerplate | high-volume, low-judgment | **Grok grok-4.5** → `grok-composer-2.5-fast` for pure bulk | low / default | Grok-native fan-out |
-| Test / sad-path suites | verifiable downstream | **Grok grok-4.5** | default | capability-routed |
-| Frontend / UI implementation | visual judgment | **Kimi `-m kimi-code/k3`** (pin it — default K2.7 is mid-tier) | max | trusted worktree only |
-| Adversarial branch review | correctness · gates · races | **Codex `review --base`** + **Grok `--sandbox read-only`** | codex medium | cross-family; author family excluded |
-| Safe validation on an untrusted tree | must not mutate | **Grok `--sandbox read-only`** (kernel-enforced) | default | validator (NOT Kimi — soft RO only) |
-| Bulk scouting / research / inventory | parallelizable, verified downstream | `gpt-5.6-luna` · `grok-composer-2.5-fast` · cheap researcher subagent (`haiku`/`sonnet`) | low | cost-tier / background fan-out |
-| "Give me different angles" / meta-analysis | wants diverse judgment | **Opus + Codex + Grok** in parallel | — | angle panel; convergence = confidence |
-| Genuinely uncertain hard design | no clear best builder | all families, separate worktrees | high | tournament — reserve (expensive) |
-| Fix round after request-changes | spec'd by the reviewer's findings | **same builder family as the branch** | as-builder | follow-up, no re-route |
-| Long-horizon unattended backend | judgment under vague prompts | **Claude** (NOT Kimi/Grok — drift) | high | capability-routed |
-
-**Effort dial (secondary):** bump `--reasoning-effort high` (grok) / a higher codex effort ONLY for
-the hard core or the adversarial-verify pass on a subtle finding; drop to `low` for mechanical
-sweeps on a capable model. Kimi K3 defaults to `max`; leave it.
-
-**Probation lane:** a newly-released model with vendor-only benchmarks (e.g. K3 at launch) is routed
-**conservatively** — narrow domain + an extra review check — until independently validated; record
-the outcome + date in the KB routing note.
-
-**Common over/under-provisioning traps** (from real runs): treating Codex as *only* a reviewer (it's
-a first-class builder now, ~⅓ cost); treating Grok as "weak" (it's **mis-routed, not weak** — wrong
-for convention-dense code, right for mechanical/test/CLI work); paying Fable-high rates on the easy
-majority (that's what cost-tiering exists to stop); routing all Kimi work to the CLI default K2.7
-(under-provisions frontend — pin `k3`).
-
-**Strategies (pick per situation):**
-1. **Capability-routed pipeline (DEFAULT):** route each task by the table above — frontend/UI
-   slices now go to kimi with `-m kimi-code/k3`; every branch gets cross-family review (`codex review` + grok
-   read-only + claude convention check). Invariant: the author's model family NEVER validates
-   its own branch. Kimi branches especially need the sad-path review pass (check for disabled/
-   commented-out tests — a reported failure mode).
-2. **Fixed-role assembly line:** one builds / one tests / one validates. Predictable; wastes edges.
-3. **Tournament:** the contenders implement the same hard design in separate worktrees; a judge
-   panel picks the winner. Expensive — reserve for one-off uncertain design calls. For a
-   design-heavy UI page, a claude × kimi-k3 two-way is the cheapest high-signal tournament.
-4. **Native fan-out:** for big mechanical sweeps, ONE pane using the runtime's own orchestrator —
-   grok's 8-subagent git-worktree fan-out, or kimi's `AgentSwarm` (up to 128 template-driven
-   subagents, BUT one shared working tree: partition file ownership in the template, or keep
-   swarms analysis/read-shaped). Other families review the reconciled result.
-5. **Cost-tiering:** `-m gpt-5.6-luna` / `grok-composer-2.5-fast` / kimi default K2.7 for bulk
-   scouting/boilerplate; sol/fable/k3 + high effort only for hard cores.
+Reviewer seats follow the same flags (codex sol-medium + grok default are the proven cross-family
+review pair; the author's model family NEVER validates its own branch); fix-round REVERIFY seats can
+often drop a tier — they check a named diff against a named brief. Which provider/tier gets which
+work, and when to escalate or drop a tier, is the KB routing note's job — read it (link above).
 
 **Hard rules regardless of strategy:** one writer per git worktree; blueprint prompt files
 (self-contained: context, spec, file ownership, edge cases, tests, rules); tsoul bookkeeping
@@ -262,13 +202,6 @@ kimi AgentSwarm runs emit ONE Stop event for the whole swarm (subagent completio
 `Notification` hooks, not `Stop`) — don't read the events file as per-subagent progress; mind
 account quotas when four providers fan out at once (kimi panes + headless `-p` runs share one
 OAuth account; K3 is plan-gated).
-
-**K3 routing re-validation trigger:** the frontend→K3 edge rests on a days-old crowd Elo that
-measures single-shot output appeal, not blueprint-driven agentic delivery. Before K3 becomes
-the standing default: re-check its Arena standing and run a claude × kimi-k3 tournament on 2-3
-real repo frontend slices; record the outcome + date in the TeamSoul KB routing note. Also
-benchmark `kimi-code/kimi-for-coding-highspeed` for the bulk/cost-tier lane (registered by
-login but unrouted; speed/pricing profile unverified).
 
 **Codex dispatch gotchas (verified live 2026-07-16, codex 0.144.1):**
 - **Codex is TTY-only in practice.** Both `codex review` and `codex exec` piped from a
@@ -317,77 +250,134 @@ Spawns interactive agent sessions in split panes within the **current workspace*
 prompts, and lets the user interact with each agent. Each prompt may be prefixed `claude:`,
 `codex:`, `grok:`, or `kimi:`; unprefixed defaults to `claude`.
 
-**Workflow:**
+#### PRIMARY path — drive it through `scripts/cmux-fan.sh` (do this by default)
 
-1. **Get current context and make a session prompt dir:**
-   ```bash
-   cmux identify
-   # Per-session prompt dir — prevents two concurrent orchestrator sessions
-   # clobbering each other's /tmp prompt files
-   PROMPT_DIR=$(mktemp -d /tmp/cmux-agents.XXXXXX)
-   ```
+The helper now owns the whole dispatch loop — **launch** (runtime-aware startup + trust/picker
+dismissal), **send** (readiness gate + submit-verify/Enter-resend), **wait** (marker-poll, no
+`timeout(1)`), and **collect** (file-based, flags missing verdicts). Because launch and the
+send/verify loop live *inside* the helper, the four recurring footguns — the Enter-drop, the
+200-char/`===`/`{}` send hazards, `timeout` not existing, and re-derived per-runtime startup —
+become **structurally impossible on this path**. Prefer it; only hand-roll when the helper genuinely
+can't express what you need (see the fallback below).
 
-2. **Write each agent's prompt file** to `$PROMPT_DIR/agent-N-<name>.md` (see Prompt engineering
-   below — MANDATORY), and show them to the user for review before dispatching.
+```bash
+FAN=~/.claude/skills/cmux/scripts/cmux-fan.sh
+cmux identify                                            # current workspace/surface context
 
-3. **Start the completion-event listener BEFORE dispatching** (see Completion detection):
-   ```bash
-   cmux events --name notification.requested --no-heartbeat --no-ack > "$PROMPT_DIR/events.jsonl" &
-   # remember the PID to kill later
-   ```
+# 1. Shared work dir (replaces the hand-rolled mktemp PROMPT_DIR).
+export CMUX_FAN_DIR=$("$FAN" init)
 
-4. **Create split panes** — one per agent, without stealing focus:
-   ```bash
-   # First agent: split right
-   cmux new-split right --workspace workspace:1 --focus false
-   # Returns: OK surface:N workspace:1
-   # Second agent: split down from the first split
-   cmux new-split down --workspace workspace:1 --surface surface:N --focus false
-   ```
+# 2. Write each blueprint, then register it — `prompt` appends the verdict+.done contract
+#    (see Prompt engineering below — MANDATORY). Show the files to the user before dispatch.
+"$FAN" prompt agent-1-api      "$CMUX_FAN_DIR/blueprint-api.md"
+"$FAN" prompt agent-2-ui       "$CMUX_FAN_DIR/blueprint-ui.md"
 
-5. **Launch each agent:**
+# 3. (Optional) completion-event listener — supplementary only; `wait` polls .done markers,
+#    it does NOT depend on events. Start it if you want live per-turn signal:
+cmux events --name notification.requested --no-heartbeat --no-ack > "$CMUX_FAN_DIR/events.jsonl" &
 
-   **codex** — prompt goes in as a CLI argument, one shot, no startup handling needed:
+# 4. Create one split per agent (caller creates the surface; launch starts the agent IN it):
+cmux new-split right --workspace workspace:1 --focus false          # → surface:11
+cmux new-split down  --workspace workspace:1 --surface surface:11 --focus false   # → surface:12
+
+# 5. Launch — runtime-aware. claude/kimi launch idle, then you `send`; codex/grok take the
+#    prompt as a launch arg and run immediately (no `send` after).
+#    ALWAYS name the model (--model / -m) — see the dispatch-flag table above.
+"$FAN" launch agent-1-api surface:11 codex --model gpt-5.6-sol \
+       --prompt-file "$CMUX_FAN_DIR/prompt-agent-1-api.md"        # prompt-as-arg; NO send after
+"$FAN" launch agent-2-ui  surface:12 claude --model sonnet       # awaiting-send
+"$FAN" send   agent-2-ui  surface:12 --ready-regex '❯'           # readiness-gated, submit-verified
+
+# 6. Sidebar visibility (optional):
+cmux set-status "agents" "2 running" --workspace workspace:1
+cmux set-progress 0.0 --label "Agents running"
+
+# 7. Wait — marker-poll with a bounded SECONDS budget (NOT timeout(1), which macOS lacks):
+"$FAN" wait --timeout 900
+
+# 8. Collect (reads verdict FILES, names any agent that skipped its file), then clean up:
+"$FAN" collect --out "$CMUX_FAN_DIR/all-verdicts.md"
+[ -n "${EVENTS_PID:-}" ] && kill "$EVENTS_PID" 2>/dev/null
+cmux close-surface --surface surface:11; cmux close-surface --surface surface:12
+cmux clear-status "agents"; cmux clear-progress
+cmux notify --title "Agents Done" --body "All tasks complete"
+"$FAN" clean                                              # removes $CMUX_FAN_DIR
+```
+
+Verb reference (matches `scripts/cmux-fan.sh` exactly):
+- `launch <name> <surface> <runtime> [--model M] [--prompt-file F] [--warmup N]` — `runtime ∈
+  claude|codex|grok|kimi`. `claude`/`kimi` launch to an idle composer (prints `awaiting-send`) — run
+  `send` after. `codex`/`grok` with `--prompt-file` run the task immediately (prints `prompt-as-arg`)
+  — do NOT `send` after; bare (no `--prompt-file`) launches idle. Aborts the lane if the surface
+  read-screen shows `Surface not found` / `not_found` / `Remote Control failed` / `Session creation
+  failed`. Does not need `$CMUX_FAN_DIR`.
+- `send <name> <surface> [--warmup N] [--ready-regex RE] [--ready-timeout N] [--submit-retries N]`
+  — gates on readiness, sends the single quoted `read prompt-<name>.md …` pointer, then resends
+  Enter up to `--submit-retries` (default 2) while the pointer is still verbatim in the composer;
+  WARNs (never fails) if still stuck.
+- `wait [--timeout N] [--poll N]` · `collect [--out FILE]` · `prompt <name> <file|->` · `init` ·
+  `clean`.
+
+> **One startup edge is still manual on the helper path:** kimi's post-launch screen is not yet
+> live-validated, so `launch … kimi` reads the screen after `sleep 5` but does not assert a specific
+> idle marker — if a login/consent screen is up, its `send` may type into the wrong surface. When
+> dispatching kimi for the first time in a session, `cmux read-screen --surface surface:N --lines 15`
+> once to confirm an idle composer before `send`.
+
+#### Manual fallback (when you can't use the helper)
+
+Hand-roll only if the helper can't express the case. This is the raw sequence the helper automates —
+every footgun below is why the helper exists.
+
+1. **Context + work dir:** `cmux identify`; `PROMPT_DIR=$(mktemp -d /tmp/cmux-agents.XXXXXX)`
+   (per-session so concurrent orchestrators don't clobber each other's prompt files).
+2. **Write each blueprint** to `$PROMPT_DIR/agent-N-<name>.md` (append the "write verdict +
+   `touch <name>.done` as your LAST action" contract yourself), show them to the user.
+3. **Start the event listener** (optional): `cmux events --name notification.requested
+   --no-heartbeat --no-ack > "$PROMPT_DIR/events.jsonl" &` (remember the PID).
+4. **Create splits:** `cmux new-split right --workspace workspace:1 --focus false` → `surface:N`,
+   then `cmux new-split down --workspace workspace:1 --surface surface:N --focus false`.
+5. **Launch each agent by hand:**
+
+   **codex** — prompt is a CLI argument, runs immediately:
    ```bash
    cmux send --surface surface:N "codex -s workspace-write -a never 'read $PROMPT_DIR/agent-1-api.md and implement it'"
    cmux send-key --surface surface:N enter
    ```
 
-   **grok** — prompt also goes in as a CLI argument, but handle the startup directory picker:
+   **grok** — prompt is a CLI argument; dismiss the startup directory picker:
    ```bash
    cmux send --surface surface:N "grok --sandbox workspace --always-approve 'read $PROMPT_DIR/agent-1-api.md and implement it'"
    cmux send-key --surface surface:N enter
-   # "Run Grok Build in a project directory?" picker — pick the current dir:
-   sleep 3
-   cmux send --surface surface:N '1'
-   cmux send-key --surface surface:N enter
+   sleep 3            # "Run Grok Build in a project directory?" picker — pick the current dir:
+   cmux send --surface surface:N '1'; cmux send-key --surface surface:N enter
    # the queued prompt argument runs immediately after the picker is dismissed
    ```
 
    **kimi** — no CLI-arg prompt in interactive mode; launch-then-send like claude:
    ```bash
-   cmux send --surface surface:N "kimi --auto -m kimi-code/k3"   # k3 for frontend work; omit -m for default K2.7
+   cmux send --surface surface:N "kimi --auto -m kimi-code/k3"   # k3 for frontend; omit -m for default K2.7
    cmux send-key --surface surface:N enter
-   # Startup screens not yet live-validated — read-screen before sending the task:
    sleep 5
    cmux read-screen --surface surface:N --lines 15   # confirm idle composer, no login/consent screen
    cmux send --surface surface:N "read $PROMPT_DIR/agent-3-frontend.md and implement it"
    cmux send-key --surface surface:N enter
    ```
 
-   **claude** — launch, handle startup prompts, then send the task:
+   **claude** — launch, handle startup prompts, then send the task pointer:
    ```bash
-   cmux send --surface surface:M 'claude --dangerously-skip-permissions'
+   cmux send --surface surface:M 'claude --model sonnet --dangerously-skip-permissions'   # NAME the model
    cmux send-key --surface surface:M enter
-   # Workspace trust prompt (non-git dirs only) — auto-dismiss:
-   sleep 3
-   cmux send --surface surface:M '1'
-   cmux send-key --surface surface:M enter
-   # Wait for full startup, then send the task pointer (short string only)
-   sleep 5
+   sleep 3            # workspace trust prompt (non-git dirs only) — auto-dismiss:
+   cmux send --surface surface:M '1'; cmux send-key --surface surface:M enter
+   sleep 5            # then send the task pointer (short single-line string only)
    cmux send --surface surface:M "read $PROMPT_DIR/agent-2-ui.md and implement it"
    cmux send-key --surface surface:M enter
    ```
+
+   After every hand-rolled `send`+Enter, `read-screen` the pane to confirm it submitted (the
+   Enter-drop is universal — see Context hygiene) and resend Enter if the pointer is still in the
+   composer. This verify loop is exactly what `cmux-fan.sh send` does for you.
 
    > **`cmux send` length limit is a confirmed upstream bug, not folklore** (manaflow-ai/cmux
    > #2396, #4275: no size-based chunking in the PTY write path; long strings truncate or freeze
@@ -396,46 +386,49 @@ prompts, and lets the user interact with each agent. Each prompt may be prefixed
    > prompt file + a short "read X and do it" pointer.
 
    > **Two `send` footguns that recur silently** (34 + 39 hits across one week of sessions):
-   > - **macOS has no `timeout`.** Any script you `send` into a pane using `timeout N …` dies with
-   >   `command not found: timeout`. Use `gtimeout` (`brew install coreutils`) or a shell fallback:
-   >   `( cmd & p=$!; sleep N; kill $p 2>/dev/null )`.
+   > - **There is no `timeout(1)` here.** macOS ships no `timeout`, and `gtimeout` (coreutils) is
+   >   NOT installed on this machine — a script you `send` using `timeout N …` dies with
+   >   `command not found`. For a bounded wait prefer `cmux-fan.sh wait` (SECONDS-based); for an
+   >   ad-hoc one-off use the pure-bash fallback `( cmd & p=$!; sleep N; kill $p 2>/dev/null )`.
+   >   Never reach for `timeout`/`gtimeout`.
    > - **Never `send` `===MARKER===` or a bare `{}` as raw text.** zsh eval-mangles them (you'll
    >   see `=== not found` / `== not found` / `no matches found`). Single-quote the whole payload —
    >   or better, and this also sidesteps the 200-char cap, write the script to a file and
    >   `send "bash /tmp/x.sh"`.
 
-   > **Claude `.claude/` write prompt** — known bug since v2.1.78
+   > **Claude `.claude/` write prompt** (applies on ANY dispatch path) — known bug since v2.1.78
    > ([#35718](https://github.com/anthropics/claude-code/issues/35718)): writes to `.claude/`
    > paths prompt even with `--dangerously-skip-permissions`. Structure agent tasks to avoid
    > `.claude/` writes; let the orchestrator handle those.
 
-6. **Set sidebar status** for visibility:
-   ```bash
-   cmux set-status "agents" "2 running" --workspace workspace:1
-   cmux set-progress 0.0 --label "Agents running"
-   ```
-
-7. **Wait for completion** — event-driven, not polling (see Completion detection below).
-
-8. **Collect and clean up** — read the artifact FILE, not the screen (see collection rule below):
+6. **Sidebar status:** `cmux set-status "agents" "2 running" --workspace workspace:1`;
+   `cmux set-progress 0.0 --label "Agents running"`.
+7. **Wait for completion** — poll `.done` markers (see Completion detection); never a foreground
+   `sleep` loop.
+8. **Collect + clean up** — read the artifact FILE, not the screen:
    ```bash
    cat "$PROMPT_DIR/verdict-agentN.md"                            # primary: the deliverable file
    cmux read-screen --surface surface:N --scrollback --lines 60   # fallback: only if file missing
    kill $EVENTS_PID
    cmux close-surface --surface surface:N
-   cmux clear-status "agents"
-   cmux clear-progress
+   cmux clear-status "agents"; cmux clear-progress
    cmux notify --title "Agents Done" --body "All tasks complete"
    rm -rf "$PROMPT_DIR"
    ```
 
 ### Completion detection (event-driven — the old read-screen polling is the fallback)
 
-**Collect from files, not the screen — this is the default that removes most of the friction.**
-Session mining showed `read-screen` is ~36% of all cmux calls and the source of 54 `Surface not
-found` errors/week — nearly all avoidable. Have every dispatched agent write its deliverable to
-`$PROMPT_DIR/verdict-<agent>.md` AND `touch $PROMPT_DIR/<agent>.done` as its LAST action. The
-orchestrator polls the *marker* (`test -f`), then `cat`s the verdict. Why this beats `read-screen`:
+**`read-screen` is structural to the dispatch loop — the realistic goal is to move it OFF the
+collection path and OUT of your hands on the send path, not to zero.** Session mining put
+`read-screen` at ~36% of all cmux calls (710 vs 44 events) and the source of 54 `Surface not
+found` errors/week. It won't disappear — send-submit verification *needs* it (the Enter-drop is
+universal). But two of its three uses are eliminable: **(a)** collection-phase reads are replaced by
+file markers (below), and **(b)** the send/verify read is now folded INSIDE `cmux-fan.sh send`, so on
+the helper path you never hand-write it. What remains is a small residue on the manual fallback path.
+
+For collection: have every dispatched agent write its deliverable to `$PROMPT_DIR/verdict-<agent>.md`
+AND `touch $PROMPT_DIR/<agent>.done` as its LAST action. The orchestrator polls the *marker*
+(`test -f`), then `cat`s the verdict. Why the file beats a collection-phase `read-screen`:
 - **Race-free & provider-agnostic** — identical for claude/codex/grok/kimi, and needs no per-pane
   `surface_id` (grok reports it `null`, so screen-attribution is impossible there anyway).
 - **Survives pane close.** A finished pane may auto-close; a late `send`/`read-screen`/`close`
@@ -458,10 +451,13 @@ lives in FILES (briefs, out-files, verdicts) — panes are disposable. Rules:
   through fix rounds — but once ctx passes ~40–50%, `/clear` (claude) or a fresh pane and have the
   builder re-read its OWN out-file + the fix brief; the out-file IS the handoff artifact, so make
   builders write complete out-files precisely so their pane is replaceable.
-- **Read-screen after EVERY send — the Enter-drop footgun is universal.** Sends fail to submit on
-  kimi AND claude panes alike, repeatedly per session. The tell: the prompt sitting INSIDE the
-  composer box = stuck (send Enter again); prompt above an empty composer = submitted. A lane
-  "idle" minutes after dispatch is almost always a stuck composer, not a fast finish.
+- **The Enter-drop is universal — verify every hand-rolled send.** Sends fail to submit on kimi AND
+  claude panes alike, repeatedly per session. The tell: the prompt sitting INSIDE the composer box =
+  stuck (send Enter again); prompt above an empty composer = submitted. A lane "idle" minutes after
+  dispatch is almost always a stuck composer, not a fast finish. `cmux-fan.sh send` bakes this
+  read-screen-and-resend loop in (`--submit-retries`, default 2), so on the helper path you don't
+  write it by hand — it survives only on the manual fallback path, where you MUST do it after each
+  `send`+Enter.
 - **Background watcher loops get reaped externally** — state lives in marker files, so a killed
   watcher is a non-event: check markers, restart the loop. Never read a killed watcher as a
   failed lane.
@@ -469,18 +465,26 @@ lives in FILES (briefs, out-files, verdicts) — panes are disposable. Rules:
   accidentally resumed.
 
 **Ready-made helper — `scripts/cmux-fan.sh`** bakes this whole contract in so you don't re-derive
-it by hand (it's the structural version of these rules — the four footguns become impossible):
+it by hand (it's the structural version of these rules). It now owns the FULL dispatch loop —
+`launch` (runtime-aware startup + trust/picker dismissal), `send` (readiness gate + submit-verify
+Enter-resend), `wait` (marker-poll, no `timeout(1)`), and `collect` (file-based) — so the four
+recurring footguns become impossible on this path (see the PRIMARY path in `/cmux run` for the full
+flow):
 ```bash
 FAN=~/.claude/skills/cmux/scripts/cmux-fan.sh
 export CMUX_FAN_DIR=$("$FAN" init)                       # shared work dir
 "$FAN" prompt reviewer-claude ./brief-claude.md          # appends the verdict+.done contract
-"$FAN" send   reviewer-claude surface:12 --ready-regex '❯'  # readiness-gated, single quoted pointer
+cmux new-split right --workspace workspace:1 --focus false   # → surface:12 (caller creates it)
+"$FAN" launch reviewer-claude surface:12 claude --model sonnet   # runtime-aware startup
+"$FAN" send   reviewer-claude surface:12 --ready-regex '❯'      # readiness-gated, submit-verified
 "$FAN" wait   --timeout 900                              # polls .done markers (never read-screen)
 "$FAN" collect --out "$CMUX_FAN_DIR/all-verdicts.md"     # cats verdicts; flags any that wrote no file
 ```
-`send` aborts a lane on `Surface not found` / `Remote Control failed` instead of typing into a dead
-pane; `wait` polls markers so a pane that auto-closed on finish is a non-event; `collect` names any
-agent that skipped its verdict file. Use it as-is, or read it as the reference pattern.
+`launch`/`send` abort a lane on `Surface not found` / `Remote Control failed` instead of typing into
+a dead pane; `wait` polls markers so a pane that auto-closed on finish is a non-event; `collect`
+names any agent that skipped its verdict file. **One residual manual edge:** kimi's post-launch
+screen isn't yet asserted (login/consent screens aren't distinguished), so read-screen a first-time
+kimi pane once before `send`. Use it as-is, or read it as the reference pattern.
 
 This is the same file-based approach **soulpod** already proves in `src/clean/*` (it reads clean
 replies from provider transcript/rollout files, never the screen). Reliability hierarchy for
@@ -513,18 +517,13 @@ grok-style null attribution until proven otherwise. Subscribe once, before dispa
 cmux events --name notification.requested --no-heartbeat --no-ack > "$PROMPT_DIR/events.jsonl" &
 ```
 
-Then wait without blocking the orchestrator: use a `run_in_background` Bash call
-(`sleep 60 && echo poll`) and on each wake-up check the events file for new lines; when one
-arrives, `read-screen` the agent panes to see which one finished.
-
-**Match events to panes by `surface_id`** (verified live against cmux 0.64.17): each event frame
-carries a top-level `"surface_id"` (UUID). Resolve each agent pane's UUID once after creating it
-(`cmux list-pane-surfaces --id-format both` or `cmux tree --all --json`), then:
-```bash
-grep -q "\"surface_id\":\"$AGENT_SURFACE_UUID\"" "$PROMPT_DIR/events.jsonl"
-```
-This is precise per-agent — matching on `workspace_id` alone false-positives on notifications
-from any other pane in the same workspace.
+Wait without blocking the orchestrator: a `run_in_background` Bash call (`sleep 60 && echo poll`)
+that checks the events file for new lines on each wake-up. **Match events to panes by `surface_id`**
+(verified live, cmux 0.64.17): each claude event frame carries a top-level `"surface_id"` UUID —
+resolve each pane's UUID once (`cmux list-pane-surfaces --id-format both`) and
+`grep -q "\"surface_id\":\"$UUID\"" "$PROMPT_DIR/events.jsonl"`. Precise per-agent; matching on
+`workspace_id` alone false-positives on any other pane in the workspace. (grok reports it `null` and
+codex may not fire — see gotchas — so file markers remain the reliable "is it done".)
 
 **Hard-won gotchas (from community + live verification):**
 - **Redirect events to a FILE.** Piping `cmux events | jq` directly stalls on stdout buffering.
@@ -543,18 +542,13 @@ from any other pane in the same workspace.
   confirmed) — you get surface/workspace/timing metadata only; content comes from `read-screen`.
 - **Kill the listener** (`kill $EVENTS_PID`) during cleanup.
 
-**Screen-verification markers** (used after an event, or as the pure-polling fallback if the
-events channel is unavailable):
-- Claude done: line matching `✻ Crunched for` / `✻ Worked for` (any past-tense cooking verb) +
-  the `❯` prompt. Still working: `✶ Misting…` etc. with elapsed time.
-- Codex done: the `Esc to interrupt` footer marker is gone and the composer input box is back.
-  Still working: `Esc to interrupt` visible.
-- Grok done: a `Worked for Xs.` line + the empty `❯` composer box (status bar shows
-  `Grok 4.5 (high) · always-approve`). Still working: `◆ Thought for …` / `◆ Run …` activity
-  lines streaming. Grok's TUI keeps finalized output in scrollback (like Codex, unlike Claude),
-  so `read-screen --scrollback` recovers long deliverables.
-- Do NOT use blocking `sleep` loops in the foreground — schedule checks with `run_in_background`
-  so the orchestrator stays responsive.
+**Screen-verification markers** (used after an event, or as the pure-polling fallback when the
+events channel is unavailable): the per-runtime working/done markers are the "Screen marker" rows of
+the Agent Runtimes table above (Claude `✻ Worked for…`+`❯` vs `✶ Misting…`; Codex composer-back vs
+`Esc to interrupt`; Grok `Worked for Xs.`+`❯` vs `◆ Thought/Run…`). Grok's and Codex's TUIs keep
+finalized output in scrollback (unlike Claude's alternate-screen redraw), so `read-screen
+--scrollback` recovers long grok/codex deliverables. Do NOT use blocking `sleep` loops in the
+foreground — schedule checks with `run_in_background` so the orchestrator stays responsive.
 
 **Prompt engineering (MANDATORY for all orchestrated agents, all four runtimes):**
 
@@ -780,6 +774,9 @@ cmux browser snapshot --surface surface:N --interactive --compact   # verify, ad
 | `cmux tree` / `cmux list-workspaces` | Topology inspection |
 | `cmux new-pane --type browser --url <url>` | Open browser pane |
 | `cmux capabilities --json` | Machine-readable feature probe before assuming a command exists |
+
+**Not these (tmux-isms cmux does NOT use):** `capture-pane` → use `read-screen`; `kill-pane`/
+`close-pane` → `close-surface`; `list-panes` → `list-pane-surfaces`.
 
 ## Key Shortcuts
 | Shortcut | Action |
