@@ -1,12 +1,13 @@
 ---
 name: cmux
-description: Orchestrate multi-agent cmux sessions (Claude/Codex/Grok/Kimi) in split panes — dispatch, completion detection, cross-model review, browser panes, workflow templates. Use for "orchestrate agents", "split panes", "cross-model review", "fan out agents", "parallel review/debug", cmux setup/status/notify.
+description: Orchestrate multi-agent cmux sessions (Claude/Codex/Grok/Kimi/Qwen) in split panes — dispatch, completion detection, cross-model review, browser panes, workflow templates. Use for "orchestrate agents", "split panes", "cross-model review", "fan out agents", "parallel review/debug", cmux setup/status/notify.
 ---
 
 # cmux Terminal Setup (/cmux)
 
 Manage and configure cmux terminal workspaces for Claude Code projects. Orchestrate multi-agent
-sessions (Claude Code, OpenAI Codex CLI, xAI Grok Build CLI, and Moonshot Kimi Code CLI), browser
+sessions (Claude Code, OpenAI Codex CLI, xAI Grok Build CLI, Moonshot Kimi Code CLI, and Alibaba
+Qwen Code CLI), browser
 panes, and workflow templates from the main Claude Code instance.
 
 > **Layering with the official cmux skills** (installed via `npx skills add manaflow-ai/cmux-skills -g`):
@@ -17,7 +18,7 @@ panes, and workflow templates from the main Claude Code instance.
 >
 > **This skill is the orchestration layer on top**: agent runtimes, dispatch workflows, completion
 > detection, and workflow templates. Validated against: cmux 0.64.17, codex-cli 0.144.1,
-> grok (Grok Build) 0.2.99, kimi-code 0.26.0, Claude Code 2.x.
+> grok (Grok Build) 0.2.99, kimi-code 0.26.0, qwen-code 0.20.0 (probation), Claude Code 2.x.
 
 ## Commands
 
@@ -161,6 +162,58 @@ explicit exception).
 
 ---
 
+### qwen (5th runtime — PROBATION lane, live-validated 2026-07-27 · qwen-code 0.20.0)
+
+Qwen Code (`qwen`) is a **gemini-cli fork** turned **BYOM gateway**: it drives qwen3.x *and any
+OpenAI-compatible model* via a configured provider. Added on probation — doc-derived rows were
+corrected against a live install (a live test overturned three of them). Install:
+`npm i -g @qwen-code/qwen-code` (Node ≥22) **or** `brew install qwen-code`. **No free tier** —
+`qwen auth` is literally "(removed)"; configure a provider (BYOK: `OPENAI_API_KEY`/`OPENAI_BASE_URL`/
+`OPENAI_MODEL`, DashScope, OpenRouter, or a local Ollama/vLLM endpoint) in `~/.qwen/settings.json`
+and verify it — a bad key 401s silently mid-lane.
+
+| Row | `qwen` |
+|---|---|
+| **Launch (autonomous)** | `qwen --approval-mode auto -i "<prompt>"` — bounded autonomy (auto-approves reads / in-cwd build+test / in-workspace edits; blocks destruction + `curl\|sh`). `--approval-mode` is a REAL flag though HIDDEN from `--help` (yargs still rejects genuine typos). **Approval-layer, NOT a sandbox** |
+| **Full-bypass** | `--yolo` — auto-approves everything; headless `--yolo` runs at **host privilege, no sandbox** (live warning confirmed it). Explicit request only; pair with `-s`/`QWEN_SANDBOX` + a trusted worktree; silence with `QWEN_CODE_SUPPRESS_YOLO_WARNING=1` |
+| **Sandbox** | OFF by default; `-s`/`--sandbox` or `QWEN_SANDBOX=docker\|podman` (macOS Seatbelt `permissive-open` allows net / `strict` denies). Kimi-like: the approval mode is not the sandbox |
+| **Initial prompt** | **prompt-as-arg via `-i`** (`--prompt-interactive` — runs immediately, stays interactive; live-verified in a cmux pane). NOT `-p` (headless: prints & EXITS). **No trust picker** (folderTrust off) — nothing to dismiss, cleaner than grok |
+| **Read-only reviewer** | `--approval-mode plan` (SOFT read-only, like kimi — not kernel-enforced) + a diff-only prompt under `-s`. ⚠️ the bundled `/review` skill CAN edit files (worktree + build/test) — NOT a safe gate |
+| **Model override** | `-m <id>` (BYOM gateway — name the model per your provider). Session resume `-c` (most-recent per-PROJECT — cleaner than kimi's ambiguous `-c`) / `-r <id>`. `-o text\|json\|stream-json` for headless; `--fallback-model` for capacity errors |
+| **Completion signal** | manual **native** `Stop` hook in `~/.qwen/settings.json` → `cmux notify` (event-based, better than screen-scrape). NOT in `cmux hooks setup`; the `gemini` hook path is a NO-OP (it writes `~/.gemini`, qwen reads `~/.qwen`). Per-pane attribution UNPROVEN → treat grok/kimi-style: ONE qwen pane/workspace when relying on events |
+| **Screen working / done** | working = `∴ Thinking…` + elapsed + `esc to cancel`; done = idle composer `> Type your message…` + status bar `<dir> · git:(branch) · <model> · Context X% used` + `Auto mode`; output lines prefixed `◆` (all live-captured) |
+
+**Qwen safety default**: `qwen --approval-mode auto -i "…"` — the bounded-autonomy tier (the qwen
+analogue of codex `-s workspace-write -a never`), BUT it is an approval classifier, not a
+filesystem sandbox, and qwen's OS sandbox is OFF by default — back it with `-s`/`QWEN_SANDBOX` on
+anything untrusted. `--yolo` is the full-bypass form (host-privilege when headless) — explicit
+request only. `cmux-fan.sh launch <name> <surface> qwen [--model M] --prompt-file F` bakes this in
+(prompt-as-arg via `-i`, no `send` after, no picker).
+
+**cmux completion wiring** — drop into `~/.qwen/settings.json` (absolute cmux path; the hook runs
+as a child of the qwen process inside the pane, so the socket accepts it):
+```json
+{ "hooks": { "Stop": [ { "hooks": [ { "type": "command",
+  "command": "/Applications/cmux.app/Contents/Resources/bin/cmux notify --title Qwen --body 'turn ended'",
+  "timeout": 10000 } ] } ] } }
+```
+
+**Route TO qwen:** cost-sensitive high-volume BUILDER lane where the orchestrator closes the loop
+(scaffolding, boilerplate, big-context refactors, test-gen) · a **local / no-egress lane** for
+data-sensitive work (its unique differentiator vs the all-cloud fleet) · a diversity reviewer
+VOICE. **Route AWAY:** autonomous single-shot on complex/novel work (needs iterations; independent
+hands-on saw silent context-breaking — drops an import while editing the target fn — plus weak
+async) · the merge-GATE (keep claude/codex) · turnkey **local** tool-call reliability (custom
+tool-call format → hard HTTP-500s on template/parser drift). Full routing evidence + benchmarks in
+the KB note.
+
+**Probation caveats (confirm before leaning on it):** per-pane hook attribution not probed; the
+live `/model` menu is install-specific (this box: `qwen3.7-plus` default, `-flash`/`-max` tiers,
+NO `qwen3-coder-*`); benchmarks are vendor-reported (~67–70% SWE-bench Verified on Qwen's own
+scaffold — treat as a ceiling); costs conflict across sources — pull live at dispatch.
+
+---
+
 ## Strategy selection — which provider gets which work
 
 **The volatile routing evidence lives in the KB, not here.** The per-provider route-TO/route-AWAY
@@ -176,7 +229,7 @@ What stays below is only the cmux-specific dispatch **mechanics** — the per-ru
 the "every dispatch names its model" rule, the completion-signal / pane-attribution quirks, and the
 codex TTY-only gotchas. (Runtime capabilities validated 2026-07-15; kimi added 2026-07-17.)
 
-**EVERY dispatch NAMES its model explicitly — all four providers** (retro lesson 2026-07-27:
+**EVERY dispatch NAMES its model explicitly — all five providers** (retro lesson 2026-07-27:
 six waves ran every claude lane on the bare session default — the TOP-tier model — because the
 launch command never said otherwise; kimi's `-m kimi-code/k3` was the only pinned lane). A lane
 launch without an explicit model choice is a bug in the dispatch, not a neutral default:
@@ -187,6 +240,7 @@ launch without an explicit model choice is a bug in the dispatch, not a neutral 
 | codex | `-m <model>` | `-m gpt-5.6-sol` (medium) | sol + `high` effort (hard verify/judge seats) | `-m gpt-5.6-luna` (bulk/scout) |
 | grok | `-m <model>` / `--reasoning-effort` | `grok-4.5` default effort | `grok-4.5 --reasoning-effort high` | `grok-composer-2.5-fast` |
 | kimi | `-m <alias>` | `-m kimi-code/k3` (frontend) | k3 effort max (default) | bare default (K2.7) for mechanical only — NEVER frontend |
+| qwen | `-m <id>` (BYOM) | `-m <provider default>` — this box `qwen3.7-plus`; public catalog `qwen3-coder-plus` (~1M ctx) | a `-max` / `-max-preview` tier | a `-flash` tier, or a local model (no-egress lane) |
 
 Reviewer seats follow the same flags (codex sol-medium + grok default are the proven cross-family
 review pair; the author's model family NEVER validates its own branch); fix-round REVERIFY seats can
@@ -511,7 +565,11 @@ The hook runs as a child of the kimi process inside the pane, so the cmux socket
 is not guaranteed). Kimi hooks are fail-open (errors/timeouts never block the agent), so a
 broken hook silently drops events — treat kimi completion events as best-effort like codex, and
 pair with read-screen. Whether the event carries a usable `surface_id` is unvalidated; assume
-grok-style null attribution until proven otherwise. Subscribe once, before dispatch:
+grok-style null attribution until proven otherwise. **Qwen** (gemini-cli fork) is the same shape
+but via its OWN native hooks in `~/.qwen/settings.json` (a JSON `Stop` hook → `cmux notify`, shown
+in the qwen runtime subsection above) — `cmux hooks setup` doesn't list qwen and the `gemini` path
+is a no-op (`~/.gemini` ≠ `~/.qwen`); treat attribution as unproven, one qwen pane/workspace on
+events. Subscribe once, before dispatch:
 
 ```bash
 cmux events --name notification.requested --no-heartbeat --no-ack > "$PROMPT_DIR/events.jsonl" &
@@ -804,3 +862,12 @@ cmux browser snapshot --surface surface:N --interactive --compact   # verify, ad
   passed; session resume hint `kimi -r session_<id>` printed at end of each `-p` run). Fast 0.x
   release cadence (4 releases in 4 days mid-July 2026): `kimi upgrade` / `brew upgrade
   kimi-code` often, and re-verify flags after major bumps
+- For the qwen runtime (PROBATION): `npm i -g @qwen-code/qwen-code` (Node ≥22) or `brew install
+  qwen-code` (validated: 0.20.0). NO free tier — `qwen auth` is removed; configure a provider in
+  `~/.qwen/settings.json` (BYOK: `OPENAI_API_KEY`/`OPENAI_BASE_URL`/`OPENAI_MODEL`, DashScope,
+  OpenRouter, or a local Ollama/vLLM endpoint) and verify it responds (a bad key 401s silently).
+  Completion needs a manual native `Stop` hook in `~/.qwen/settings.json` (no `cmux hooks setup
+  qwen`; the `gemini` path is a no-op). Live-validated 2026-07-27: `-i` prompt-as-arg in a pane,
+  `--approval-mode auto`/`--yolo` (real but `--help`-hidden), screen markers. Fast 0.x cadence
+  (0.20→0.21 mid-session) — re-verify flags after bumps; `-m` names the model per your provider
+  (BYOM gateway; the live menu is install-specific)

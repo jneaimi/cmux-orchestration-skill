@@ -2,7 +2,7 @@
 
 A Claude Code skill (`/cmux`) that turns [cmux](https://github.com/manaflow-ai/cmux) into a
 multi-agent orchestration surface: spawn **Claude Code**, **OpenAI Codex CLI**, **xAI Grok
-Build**, and **Moonshot Kimi Code** agents in split panes, dispatch self-contained blueprint
+Build**, **Moonshot Kimi Code**, and **Alibaba Qwen Code** agents in split panes, dispatch self-contained blueprint
 prompts, detect completion via file markers (with cmux events as a signal), and collect results —
 all driven from your main Claude Code session.
 
@@ -14,11 +14,14 @@ per-runtime completion markers.
 
 ## What's in the box
 
-- **Four agent runtimes** — launch flags, sandbox/safety defaults, trust-prompt handling, model
-  overrides, and screen "working"/"done" markers for `claude`, `codex`, `grok`, and `kimi`
-  panes. Kimi includes a dispatch-modes matrix (unattended `--auto`, attended `--yolo`, headless
-  `-p` one-shots, scriptable `/goal` mode with branchable exit codes) and manual `Stop`-hook
-  wiring for completion events.
+- **Five agent runtimes** — launch flags, sandbox/safety defaults, trust-prompt handling, model
+  overrides, and screen "working"/"done" markers for `claude`, `codex`, `grok`, `kimi`, and
+  `qwen` panes. Kimi includes a dispatch-modes matrix (unattended `--auto`, attended `--yolo`,
+  headless `-p` one-shots, scriptable `/goal` mode with branchable exit codes) and manual
+  `Stop`-hook wiring for completion events. `qwen` (Alibaba Qwen Code — a gemini-cli fork / BYOM
+  gateway) is a **probation-lane** runtime, live-validated against a real install: prompt-as-arg
+  via `-i`, `--approval-mode`/`--yolo` (real but `--help`-hidden), no free tier (BYOK), and native
+  `~/.qwen/settings.json` `Stop`-hook completion.
 - **Provider strategy selection** — a capability-routing table (which model family gets which
   kind of work), a **tier × use-case matrix** that picks the *cheapest tier that clears the bar*
   and escalates only on explicit difficulty triggers (model/tier is the primary cost lever,
@@ -64,10 +67,13 @@ per-runtime completion markers.
 - Optional runtimes: [Codex CLI](https://github.com/openai/codex) (`brew install codex`),
   Grok Build (bundled with cmux at `/Applications/cmux.app/Contents/Resources/bin/grok`), and
   [Kimi Code CLI](https://github.com/MoonshotAI/kimi-code) (`brew install kimi-code` — NOT the
-  superseded `kimi-cli` formula; K3 model access needs a Moderato+ subscription)
+  superseded `kimi-cli` formula; K3 model access needs a Moderato+ subscription), and
+  [Qwen Code CLI](https://github.com/QwenLM/qwen-code) (`npm i -g @qwen-code/qwen-code` or
+  `brew install qwen-code`, Node ≥22 — **BYOK**, no free tier; configure a provider in
+  `~/.qwen/settings.json`)
 
 Validated against: cmux 0.64.17 · codex-cli 0.144.1 · grok (Grok Build) 0.2.99 ·
-kimi-code 0.26.0 · Claude Code 2.x.
+kimi-code 0.26.0 · qwen-code 0.20.0 (probation) · Claude Code 2.x.
 
 ## Install
 

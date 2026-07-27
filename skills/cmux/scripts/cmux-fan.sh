@@ -8,7 +8,7 @@
 #   3. Never eval `===`/`{}` through a send — we only ever send one short, quoted pointer.
 #   4. No `timeout(1)` (absent on macOS) — bounded waits use bash SECONDS.
 #   5. The Enter-drop is universal — `send` verifies submission and resends Enter.
-#   6. Runtime startup (claude/codex/grok/kimi) is encapsulated in `launch`, not re-derived.
+#   6. Runtime startup (claude/codex/grok/kimi/qwen) is encapsulated in `launch`, not re-derived.
 #
 # Subcommands share a work dir via $CMUX_FAN_DIR (or --dir). Typical flow:
 #   DIR=$(cmux-fan.sh init)
@@ -57,12 +57,12 @@ cmd_prompt() {
 # split (cmux new-split) and passes the resulting <surface>; launch starts the agent IN it
 # with the right flags + startup handling. Does NOT require the work dir — it composes on a
 # surface + optional prompt file, so it works standalone.
-#   claude/kimi  → launch-then-idle; task goes in via a subsequent `send` (awaiting-send).
-#   codex/grok   → prompt is a LAUNCH ARG; the task runs immediately (prompt-as-arg), no `send`.
+#   claude/kimi     → launch-then-idle; task goes in via a subsequent `send` (awaiting-send).
+#   codex/grok/qwen → prompt is a LAUNCH ARG; the task runs immediately (prompt-as-arg), no `send`.
 cmd_launch() {
-  local name="${1:?usage: launch <name> <surface> <runtime> (claude|codex|grok|kimi)}"
-  local surface="${2:?usage: launch <name> <surface> <runtime> (claude|codex|grok|kimi)}"
-  local runtime="${3:?usage: launch <name> <surface> <runtime> (claude|codex|grok|kimi)}"
+  local name="${1:?usage: launch <name> <surface> <runtime> (claude|codex|grok|kimi|qwen)}"
+  local surface="${2:?usage: launch <name> <surface> <runtime> (claude|codex|grok|kimi|qwen)}"
+  local runtime="${3:?usage: launch <name> <surface> <runtime> (claude|codex|grok|kimi|qwen)}"
   shift 3
   local model="" prompt_file="" warmup=0
   while [ $# -gt 0 ]; do case "$1" in
@@ -72,7 +72,7 @@ cmd_launch() {
     *) die "launch: unknown flag $1";;
   esac; done
 
-  case "$runtime" in claude|codex|grok|kimi) ;; *) die "launch: unknown runtime '$runtime' (claude|codex|grok|kimi)";; esac
+  case "$runtime" in claude|codex|grok|kimi|qwen) ;; *) die "launch: unknown runtime '$runtime' (claude|codex|grok|kimi|qwen)";; esac
   [ -z "$prompt_file" ] || [ -f "$prompt_file" ] || die "launch: no such prompt file: $prompt_file"
   [ "$warmup" -gt 0 ] && sleep "$warmup"
 
@@ -135,6 +135,22 @@ cmd_launch() {
         "$CMUX_BIN" send-key --surface "$surface" enter
         sleep 3
         "$CMUX_BIN" send --surface "$surface" '1'
+        "$CMUX_BIN" send-key --surface "$surface" enter
+      fi
+      ;;
+    qwen)
+      # gemini-cli fork: prompt-as-arg via -i (--prompt-interactive: runs the prompt, stays
+      # interactive — live-verified in a cmux pane). NO trust picker (folderTrust off by default).
+      # --approval-mode is a real flag (hidden from --help but accepted); auto = bounded autonomy.
+      # BYOM gateway: -m names the model per the configured provider (no free tier — BYOK).
+      local qcmd="qwen --approval-mode auto"
+      [ -n "$model" ] && qcmd="$qcmd -m $model"
+      if [ -n "$prompt_file" ]; then
+        "$CMUX_BIN" send --surface "$surface" "$qcmd -i 'read $prompt_file and implement it, following its final step exactly'"
+        "$CMUX_BIN" send-key --surface "$surface" enter
+        status_kind="prompt-as-arg"
+      else
+        "$CMUX_BIN" send --surface "$surface" "$qcmd"
         "$CMUX_BIN" send-key --surface "$surface" enter
       fi
       ;;
