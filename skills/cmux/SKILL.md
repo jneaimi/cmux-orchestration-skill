@@ -182,6 +182,21 @@ Provider (above) is only half the choice; the other half is **tier + effort**. D
 cost lever; **reasoning-effort is a secondary dial** — in the observed builds it was left at sensible
 defaults (Codex `medium`, Kimi `max`, Grok default) and the *tier*, not the dial, was moved.
 
+**EVERY dispatch NAMES its model explicitly — all four providers** (retro lesson 2026-07-27:
+six waves ran every claude lane on the bare session default — the TOP-tier model — because the
+launch command never said otherwise; kimi's `-m kimi-code/k3` was the only pinned lane). A lane
+launch without an explicit model choice is a bug in the dispatch, not a neutral default:
+
+| Provider | The dispatch flag | Builder default | Escalate to | Cheap/mechanical |
+|---|---|---|---|---|
+| claude | `claude --model <m>` | `--model sonnet` | `--model opus` (convention-dense, shared-subsystem, long-horizon); top tier (Fable) ONLY for the hardest cores — never by omission | `--model haiku` for scouting only |
+| codex | `-m <model>` | `-m gpt-5.6-sol` (medium) | sol + `high` effort (hard verify/judge seats) | `-m gpt-5.6-luna` (bulk/scout) |
+| grok | `-m <model>` / `--reasoning-effort` | `grok-4.5` default effort | `grok-4.5 --reasoning-effort high` | `grok-composer-2.5-fast` |
+| kimi | `-m <alias>` | `-m kimi-code/k3` (frontend) | k3 effort max (default) | bare default (K2.7) for mechanical only — NEVER frontend |
+
+Reviewer seats follow the same table (codex sol-medium + grok default are the proven review pair);
+fix-round REVERIFY seats can often drop a tier — they check a named diff against a named brief.
+
 **Escalate to a HIGH tier (Opus/Fable · sol-high · grok-4.5-high · k3-max) ONLY when any of:**
 convention-dense / shared-subsystem code · needs repo+ADR+skill context · long-horizon multi-file ·
 ambiguous / underspecified (judgment-heavy) · high-stakes / irreversible · on the critical shared
@@ -380,6 +395,15 @@ prompts, and lets the user interact with each agent. Each prompt may be prefixed
    > chars and NEVER multi-line (a newline submits early). Long content always goes through a
    > prompt file + a short "read X and do it" pointer.
 
+   > **Two `send` footguns that recur silently** (34 + 39 hits across one week of sessions):
+   > - **macOS has no `timeout`.** Any script you `send` into a pane using `timeout N …` dies with
+   >   `command not found: timeout`. Use `gtimeout` (`brew install coreutils`) or a shell fallback:
+   >   `( cmd & p=$!; sleep N; kill $p 2>/dev/null )`.
+   > - **Never `send` `===MARKER===` or a bare `{}` as raw text.** zsh eval-mangles them (you'll
+   >   see `=== not found` / `== not found` / `no matches found`). Single-quote the whole payload —
+   >   or better, and this also sidesteps the 200-char cap, write the script to a file and
+   >   `send "bash /tmp/x.sh"`.
+
    > **Claude `.claude/` write prompt** — known bug since v2.1.78
    > ([#35718](https://github.com/anthropics/claude-code/issues/35718)): writes to `.claude/`
    > paths prompt even with `--dangerously-skip-permissions`. Structure agent tasks to avoid
@@ -393,9 +417,10 @@ prompts, and lets the user interact with each agent. Each prompt may be prefixed
 
 7. **Wait for completion** — event-driven, not polling (see Completion detection below).
 
-8. **Collect and clean up:**
+8. **Collect and clean up** — read the artifact FILE, not the screen (see collection rule below):
    ```bash
-   cmux read-screen --surface surface:N --scrollback --lines 60   # collect results
+   cat "$PROMPT_DIR/verdict-agentN.md"                            # primary: the deliverable file
+   cmux read-screen --surface surface:N --scrollback --lines 60   # fallback: only if file missing
    kill $EVENTS_PID
    cmux close-surface --surface surface:N
    cmux clear-status "agents"
@@ -405,6 +430,63 @@ prompts, and lets the user interact with each agent. Each prompt may be prefixed
    ```
 
 ### Completion detection (event-driven — the old read-screen polling is the fallback)
+
+**Collect from files, not the screen — this is the default that removes most of the friction.**
+Session mining showed `read-screen` is ~36% of all cmux calls and the source of 54 `Surface not
+found` errors/week — nearly all avoidable. Have every dispatched agent write its deliverable to
+`$PROMPT_DIR/verdict-<agent>.md` AND `touch $PROMPT_DIR/<agent>.done` as its LAST action. The
+orchestrator polls the *marker* (`test -f`), then `cat`s the verdict. Why this beats `read-screen`:
+- **Race-free & provider-agnostic** — identical for claude/codex/grok/kimi, and needs no per-pane
+  `surface_id` (grok reports it `null`, so screen-attribution is impossible there anyway).
+- **Survives pane close.** A finished pane may auto-close; a late `send`/`read-screen`/`close`
+  then returns `Error: not_found: Surface not found`. **Treat that error as "the agent already
+  finished" — do NOT retry, `cat` the verdict file** (it still exists on disk). Only
+  `cmux list-pane-surfaces` to re-resolve ids if you genuinely need the live pane.
+- `read-screen --scrollback` stays as the fallback when a file write was blocked.
+
+### Context hygiene in multi-round pipelines (build → review → fix-to-convergence)
+
+Retro lesson (2026-07-26/27, six waves): reusing the same panes across rounds silently compounds
+context — a builder reused across 11 fix rounds climbed past 60% ctx (~650k tokens re-paid every
+round); reviewer panes accumulated 12 rounds of stale diffs. The state that matters between rounds
+lives in FILES (briefs, out-files, verdicts) — panes are disposable. Rules:
+
+- **Reviewers: fresh pane (or `/clear`) per round.** A reverify round checks a named diff against
+  a named brief + the verdict file it wrote — prior-round pane context is redundant by
+  construction. Spawn new, point at the files, close the old pane.
+- **Builders: keep context only while it pays.** Their own build's architecture is worth carrying
+  through fix rounds — but once ctx passes ~40–50%, `/clear` (claude) or a fresh pane and have the
+  builder re-read its OWN out-file + the fix brief; the out-file IS the handoff artifact, so make
+  builders write complete out-files precisely so their pane is replaceable.
+- **Read-screen after EVERY send — the Enter-drop footgun is universal.** Sends fail to submit on
+  kimi AND claude panes alike, repeatedly per session. The tell: the prompt sitting INSIDE the
+  composer box = stuck (send Enter again); prompt above an empty composer = submitted. A lane
+  "idle" minutes after dispatch is almost always a stuck composer, not a fast finish.
+- **Background watcher loops get reaped externally** — state lives in marker files, so a killed
+  watcher is a non-event: check markers, restart the loop. Never read a killed watcher as a
+  failed lane.
+- **Close pipeline workspaces at wave end** — every leftover pane is idle context waiting to be
+  accidentally resumed.
+
+**Ready-made helper — `scripts/cmux-fan.sh`** bakes this whole contract in so you don't re-derive
+it by hand (it's the structural version of these rules — the four footguns become impossible):
+```bash
+FAN=~/.claude/skills/cmux/scripts/cmux-fan.sh
+export CMUX_FAN_DIR=$("$FAN" init)                       # shared work dir
+"$FAN" prompt reviewer-claude ./brief-claude.md          # appends the verdict+.done contract
+"$FAN" send   reviewer-claude surface:12 --ready-regex '❯'  # readiness-gated, single quoted pointer
+"$FAN" wait   --timeout 900                              # polls .done markers (never read-screen)
+"$FAN" collect --out "$CMUX_FAN_DIR/all-verdicts.md"     # cats verdicts; flags any that wrote no file
+```
+`send` aborts a lane on `Surface not found` / `Remote Control failed` instead of typing into a dead
+pane; `wait` polls markers so a pane that auto-closed on finish is a non-event; `collect` names any
+agent that skipped its verdict file. Use it as-is, or read it as the reference pattern.
+
+This is the same file-based approach **soulpod** already proves in `src/clean/*` (it reads clean
+replies from provider transcript/rollout files, never the screen). Reliability hierarchy for
+"is it done?": **structured status signal** (soulpod's `vmux agent_status` / provider rollout) >
+**completion event** (cmux `notification.requested`, below) > **screen marker** (`read-screen`).
+cmux has no structured status, so file-marker + event is its most reliable combination.
 
 Claude, Codex, and Grok emit a cmux `notification.requested` event when an agent turn ends
 (Claude via the cmux claude wrapper automatically; Codex via the one-time `cmux hooks setup

@@ -34,6 +34,16 @@ per-runtime completion markers.
   file is a self-contained spec).
 - **Event-driven completion detection** — `cmux events` subscription, per-pane `surface_id`
   matching, and the runtime-specific fallbacks for when events lie or don't fire.
+- **File-based collection + a ready-made fan-out helper** — the default that removes most of the
+  friction: every agent writes `verdict-<name>.md` + a `.done` marker as its last action, so the
+  orchestrator polls a file instead of scraping the screen (race-free, provider-agnostic, and it
+  survives a pane that auto-closes on finish). `scripts/cmux-fan.sh` bakes the whole contract in
+  (`init` / `prompt` / `send` / `wait` / `collect`) so the four recurring `send` footguns —
+  screen-scraping, `Surface not found` retries, `===`/`{}` eval-mangling, and the missing macOS
+  `timeout(1)` — become structurally impossible. Plus a **context-hygiene playbook** for
+  multi-round build→review→fix pipelines (disposable panes, fresh reviewer per round, marker-file
+  state) and an **explicit model-naming rule** — every dispatch pins its model/tier so a lane
+  never silently runs the top tier by omission.
 - **Workflow templates** — parallel review, cross-model review (Claude × Codex × Grok × Kimi
   panel), debug, dev-server + browser pane, feature scaffolding, parallel test writing.
 - **Browser automation basics** — snapshot/click/fill/eval with the verify-retry loop.
@@ -60,7 +70,10 @@ kimi-code 0.26.0 · Claude Code 2.x.
 ```bash
 git clone https://github.com/jneaimi/cmux-orchestration-skill.git
 mkdir -p ~/.claude/skills/cmux
-cp cmux-orchestration-skill/skills/cmux/SKILL.md ~/.claude/skills/cmux/
+# Copy the skill body AND the scripts/ helper (the skill references
+# ~/.claude/skills/cmux/scripts/cmux-fan.sh)
+cp -R cmux-orchestration-skill/skills/cmux/. ~/.claude/skills/cmux/
+chmod +x ~/.claude/skills/cmux/scripts/cmux-fan.sh
 
 # Optional: the notification hook
 cp cmux-orchestration-skill/hooks/cmux-notify.sh ~/.claude/hooks/
