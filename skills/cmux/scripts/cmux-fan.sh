@@ -74,6 +74,13 @@ cmd_launch() {
 
   case "$runtime" in claude|codex|grok|kimi|qwen) ;; *) die "launch: unknown runtime '$runtime' (claude|codex|grok|kimi|qwen)";; esac
   [ -z "$prompt_file" ] || [ -f "$prompt_file" ] || die "launch: no such prompt file: $prompt_file"
+  # Safe-send contract (footguns 3/4): --model and --prompt-file get single-quote-wrapped into ONE
+  # short cmux send line. Reject whitespace/quotes that would break the wrapping (or the one-line
+  # rule) rather than emit a malformed payload. Paths here are normally mktemp dirs, so this only
+  # trips on genuinely unsafe input.
+  for _v in "$model" "$prompt_file"; do
+    case "$_v" in *[[:space:]\'\"]*) die "launch: '$_v' is not send-safe (whitespace/quote breaks the single-quoted cmux send)";; esac
+  done
   [ "$warmup" -gt 0 ] && sleep "$warmup"
 
   # Guard (same abort as send): never type into a surface that never spawned.
@@ -263,10 +270,12 @@ cmd_collect() {
 cmd_clean() { _resolve_dir; rm -rf "$FAN_DIR"; echo "removed $FAN_DIR" >&2; }
 
 main() {
-  local sub="${1:-}"; shift || true
-  # allow a leading --dir on any subcommand
+  # strip --dir from ANYWHERE (before OR after the subcommand), THEN take the subcommand — so both
+  # `cmux-fan.sh --dir D prompt …` and `cmux-fan.sh prompt … --dir D` work (was: leading --dir
+  # became the subcommand and errored).
   local rest=(); while [ $# -gt 0 ]; do case "$1" in --dir) FAN_DIR="$2"; shift 2;; *) rest+=("$1"); shift;; esac; done
   if [ "${#rest[@]}" -gt 0 ]; then set -- "${rest[@]}"; else set --; fi
+  local sub="${1:-}"; shift || true
   case "$sub" in
     init) cmd_init;;
     prompt) cmd_prompt "$@";;
